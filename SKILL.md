@@ -1,6 +1,6 @@
 ---
 name: ps-jsx-poster-cutout
-description: 用 Photoshop 25.x + ExtendScript(JSX) 做全自动出图：一份 JSON 清单 → 分层 PSD/PNG/JPG/TIFF，支持图层组与组套组（任意层嵌套）、图层蒙版（显示/隐藏全部或选区）、剪贴蒙版、矢量形状层（矩形/椭圆/填充/描边）、调整层（曲线/色阶/色相饱和度/渐变映射等 14 种）、滤镜（马赛克/高斯模糊/加噪等 12 种）、文字（点/段落/竖排/变形）、图片置入、选区运算、智能对象、WebP 导出；也覆盖本地抠图（选择主体）与人像海报。当用户要求"用 PS 做海报/卡片/证件照"、"把人物抠出来换背景"、"不打开 GUI 批量出图"、"PS 能不能脚本化"时使用。已实测三份清单全通过（25 步/13 层；15 步/三层嵌套组；9 步/蒙版+形状+WebP），重开 PSD 图层名、类型、不透明度与嵌套结构保真。
+description: 用 Photoshop 25.x + ExtendScript(JSX) 做全自动出图：一份 JSON 清单 → 分层 PSD/PNG/JPG/TIFF，支持图层组与组套组（任意层嵌套）、图层蒙版（显示/隐藏全部或选区）、剪贴蒙版、矢量形状层（矩形/椭圆/填充/描边）、图层样式（描边/投影/外发光/颜色叠加/斜面和浮雕）、调整层（曲线/色阶/色相饱和度/渐变映射等 14 种）、滤镜（马赛克/高斯模糊/加噪等 11 种）、文字（点/段落/竖排/变形）、图片置入、选区运算、智能对象、多尺寸变体导出、WebP 导出；另有两个配套入口：数据表批量出图（模板 × CSV/JSON → N 张）与 PSD 模板按图层名回填（换文案/换图，版式不动）；也覆盖本地抠图（选择主体）与人像海报。当用户要求"用 PS 做海报/卡片/证件照"、"把人物抠出来换背景"、"不打开 GUI 批量出图"、"拿设计稿批量换文案"、"PS 能不能脚本化"时使用。已实测六份清单 + 批量 + 回填全部通过（共 79 步 fail=0），图层样式、变体尺寸、批量产物差异、模板哈希不变均有像素级或哈希级证据。
 agent_created: true
 ---
 
@@ -9,14 +9,17 @@ agent_created: true
 > 验证环境：Photoshop **25.0.0**（Photoshop 2024）· Win11 26200 · 559 字体 · 2026-11-15
 > 本文每条 ✅/❌ 都有对应的实测记录（`docs/VERIFY.md`），没有"看文档觉得应该行"的条目。
 
-## 0. 两条入口，先选对
+## 0. 四个入口，先选对
 
 | 入口 | 用途 | 命令 |
 |---|---|---|
 | **`scripts/ps_build.py`** | **主力**：JSON 清单 → 分层 PSD/PNG/JPG/TIFF | `python ps_build.py manifest.json` |
+| **`scripts/ps_batch.py`** | 一份模板 × CSV/JSON 数据表 → N 张（`{{字段}}` 替换） | `python ps_batch.py t.json --rows rows.csv` |
+| **`scripts/ps_fill.py`** | 打开现成 .psd，按图层名换文案/换图，版式不动 | `python ps_fill.py fill.json` |
 | `scripts/ps.py` | 底层：连接 / 跑任意 jsx / 导出图层树 / 旧版卡片模板 | `python ps.py info\|exec\|dump\|card` |
 
 清单式不是"把内容写死在 jsx 里"——而是 **Python 决定内容、PS 负责执行**：改文案只改 JSON，不碰脚本。
+`ps_build` 管"从零搭版式"，`ps_fill` 管"复用已有版式"，`ps_batch` 管"同版式多文案"。三者共用同一套导出与连接层。
 
 ```bash
 SK=~/.workbuddy/skills/ps-jsx-poster-cutout/scripts
@@ -45,6 +48,7 @@ python "$SK/ps_build.py" manifest.json             # 真跑 + 回读日志 + 核
 | 填充层：渐变 / 图案 | ✅ | `make AdjL` + `type: gradientLayer / patternLayer` |
 | 填充层：纯色 | ⚠️ | 能建（`solidColorLayer`），但**改色 `setd` 失败**（参数 3），只能用默认色 |
 | **矢量形状层** | ✅ | `make contentLayer` + `using = {type: solidColorLayer{Clr:RGBC}, shape: rectangle/ellipse, strokeStyle}`；矩形/椭圆、纯填充/描边都过，回读 `kind=SOLIDFILL` 且仍有 1 条矢量路径，见坑位 7 |
+| **图层样式** | ✅ | 描边/投影/外发光/颜色叠加/斜面和浮雕 5 种，走 AM `Lefx`；**一次 `setd` 是整体替换**，多效果必须同一次写入，见 1.6 与坑位 15 |
 
 ### 1.2 调整层（14 ✅ / 1 ❌）
 
@@ -69,7 +73,7 @@ python "$SK/ps_build.py" manifest.json             # 真跑 + 回读日志 + 核
 
 > 只建层不设参 = 默认值 = 无变化。要"看起来调过色"，必须走上面的 `setd` 分支，`ps_build.py` 已封装成 `{"type":"adjust","adj":"curves","points":[[0,12],[128,140],[255,248]]}`。
 
-### 1.3 滤镜（12 ✅）
+### 1.3 滤镜（11 ✅，与 `FILTERS` 字典逐键对齐）
 
 `layer.applyXxx()` 直接可用，MAD 全部非零：
 
@@ -129,8 +133,52 @@ executeAction(charIDToTypeID("Msc "), d, DialogModes.NO);
 
 **PSD 往返保真**（本例 13 层）：`saveAs(psd)` → `close` → `app.open` 回读，顶层 7 条、`Outer>Inner>2 子层` 三层嵌套、`LayerKind.GRADIENTMAP`、图层名/类型/不透明度/可见性全部一致。
 
-## 2. 执行通道
+### 1.6 图层样式（5 ✅，走 ActionManager `layerEffects`）
 
+DOM 没有图层样式 API，只能拼描述符。**铁律：一次 `setd` 对 `Lefx` 是整体替换**（Adobe 社区原话：any other styles applied they will be lost）→ 同一层的多个效果必须写在**同一个 `effect` 对象**里，写成两个对象只会留下后者。
+
+| 效果 | 描述符键 | 关键参数 |
+|---|---|---|
+| 描边 | `FrFX` | `Styl/FStl`=OutF/InsF/CtrF · `Sz  ` · `Clr ` · `Opct` · `Md  `/`BlnM` |
+| 投影 | `dropShadow` | distance · blur · opacity · angle · chokeMatte · color |
+| 外发光 | `outerGlow` | blur · opacity · color · chokeMatte · glowTechnique |
+| 颜色叠加 | `solidFill` | color · opacity · mode |
+| 斜面和浮雕 | `bevelEmboss` | style · depth · size · soften · angle · altitude · 高光/暗部及各自 opacity |
+
+像素证据（对"无样式基准"逐区域比，MAD > 0.5 才算真的动了像素）：
+
+| 区域 | MAD | 改动像素占比 |
+|---|---|---|
+| Title 描边+投影 | **10.847** | 17.52% |
+| Plate 斜面和浮雕 | **6.718** | 11.72% |
+| Chip 颜色叠加 | **51.663** | 79.89% |
+| GlowWord 外发光 | **6.845** | 35.26% |
+
+颜色叠加还能**解析预测**：`C8892F` 上叠 `2F7D6E` @85% → 预测 `(70,127,101)`，实测 `(70,127,101)`，误差 ≤0.5。
+
+```jsonc
+{"type":"effect", "target":"Title",
+ "stroke": {"size":5,"color":"C8892F","pos":"outside"},
+ "shadow": {"distance":10,"blur":18,"opacity":65,"angle":120}}
+```
+可省略的参数取默认值；`pos` 三选一 outside/inside/center。**脚本会回读层上真正生效的效果个数，对不上就报 FAIL**——"命令没报错"不算证据。
+
+### 1.7 变体导出（多倍率 / 多比例）
+
+```jsonc
+"out": {"variants": [
+  {"suffix":"@1.5x", "scale":1.5, "formats":["png"]},                    // 纯缩放
+  {"suffix":"1x1",   "w":1080, "h":1080, "mode":"cover"},                // 裁切填满
+  {"suffix":"9x16",  "w":1080, "h":1920, "mode":"contain"}               // 缩放后补底
+]}
+```
+
+机制：`doc.duplicate()` 出副本 → `resizeImage(BICUBIC)` → `resizeCanvas(MIDDLECENTER)` → 存 → 关副本。**主文档全程不受影响**，所以能和主格式导出同时跑。
+
+实测（源 1080×1350）：`@1.5x` 得 **1620×2025**、`1x1` 得 **1080×1080**、`9x16` 得 **1080×1920**，三个文件都落地。
+`contain` 放大画布后四周是透明的，脚本会自动用 `doc.bg` 在最底层补一层底，否则成品露空洞。
+
+## 2. 执行通道
 ```python
 import win32com.client
 app = win32com.client.Dispatch('Photoshop.Application')
@@ -142,7 +190,7 @@ app.DoJavaScriptFile(r'绝对路径\script.jsx')   # 首选，免疫字符串转
 - `DoJavaScript(code)` 只有单参数签名可用，含引号/换行易报「未终止的字符串常数」→ **一律走 .jsx 文件**。
 - 日志由 JSX 写文件、Python 读回；JSX 返回值不可靠。
 
-## 3. 坑位（14 条，全部踩过）
+## 3. 坑位（17 条，全部踩过）
 
 **1. COM 的 `Documents.Count` 不可靠** → 判断"有没有文档"只信 JSX 的 `app.documents.length`。
 
@@ -269,6 +317,21 @@ catch (e) { L("  [" + s + "] len=" + s.length + " ERR " + e.message); }
 
 顺带记几个容易数错的：`"Rd  "`（红）/ `"Grn "` / `"Bl  "`（蓝）/ `"T   "`（type 键，T+3 空格）/ `"Lvl "`（level）/ `"Nm  "`（name）。
 
+**15. 图层样式一次 `setd` 是整体替换，不是叠加。**
+`setd` 目标 `Prpr/Lefx` 会**用新描述符覆盖该层全部效果**。想要"描边 + 投影"必须把 `FrFX` 和 `dropShadow` 放进同一个 `Lefx` 里；写成两次 `setd`，第二次会把第一次的效果冲掉，而两次都返回成功、都不报错——静默坑。
+同时 `enabled` / `present` / `showInDialog` 三个布尔少写 `present` 或 `showInDialog`，效果"建了但看不见"。
+另外效果内部的混合模式键是 charID `"Md  "`（mode）+ `"BlnM"`，枚举值也是 charID（`Nrml`/`Mltp`/`Scrn`…），**和图层混合模式的 `BlendMode.NORMAL` 不是一套写法**，直接混用会报「非法参数」。这一轮我自己就又把 `"Md "`（3 字符）写了一遍，报错位置和真因差了十个字段——所以脚本里加了 charID 长度自检。
+
+**16. 换智能对象内容：目标层必须"唯一选中且可见"。**
+`placedLayerReplaceContents` 不认 `_target` 参数，只认"当前活动图层"。实测两个必踩条件：
+① 层被**隐藏**时选不中 → 报 `-25920`（错误文案是"命令当前不可用"，看起来像功能缺失）；
+② 被**图层筛选器**挡住时同样选不中，且没有干净的办法检测筛选器状态。
+所以替换前先 `l.visible = true; D.activeLayer = l;`，用完再决定要不要还原可见性。
+普通像素层不是智能对象，直接替换同样 `-25920`——脚本先判 `kind === LayerKind.SMARTOBJECT` 并给出"右键→转换为智能对象"的改法。
+
+**17. 批量的变量替换要跳过注释键。**
+模板里以 `_` 开头的字段（`_note` / `_comment`）是给人看的说明，里面常写 `{{字段}}` 当示例。如果替换器无差别遍历所有字符串，就会把这些示例当成"数据表缺字段"从而整行跳过——现象是"明明写了数据却一行都没跑"。`ps_batch.py` 已对 `_` 前缀键做豁免。
+
 ## 4. 清单字段速查
 
 ```jsonc
@@ -310,6 +373,8 @@ catch (e) { L("  [" + s + "] len=" + s.length + " ERR " + e.message); }
 - `shape.stroke` 存在时走描边模式（`fillEnabled=false`），此时 `color` 只用于内部颜色描述符。
 - `formats` 支持 `psd/png/jpg/tif/pdf/webp`。
 - `blend` 支持 normal/multiply/screen/overlay/softlight/hardlight/darken/lighten/difference/lineardodge/color/luminosity。
+- `effect` 的五类键都可省略，缺省值见 1.6；`stroke.pos` 三选一；效果混合模式用的是**另一套**写法（normal→`Nrml` 等），脚本已做映射，清单里照常写 normal/multiply/screen。
+- `out.variants` 每项必须有 `suffix`，且 `scale` 与 `w`+`h` 二选一；`mode` 缺省 `contain`。
 - `out.dir` 与 `image.path` 都**按清单文件所在目录**解析，整包目录搬走不用改。
 
 ## 5. 抠图（本地，不依赖云端）
@@ -331,10 +396,48 @@ executeAction(stringIDToTypeID("defringe"), {Wth: 1}, DialogModes.NO);
 求职/证件类人像海报要求：**正面、正装、光线均匀、无他人入镜**。
 自拍、便装、侧低头、阴天冷光 → 技术能救（曲线校色温、抠图换底），气质救不回来。这种情况先讲清楚再动手。
 
-## 7. 文件清单
+## 7. 批量出图与模板回填
+
+### 7.1 `ps_batch.py`：模板 × 数据表
+
+```bash
+python ps_batch.py examples/batch_template.json --rows examples/batch_rows.csv
+```
+
+清单里**任何字符串**都能写 `{{字段}}`，`out.stem` 也支持（`"cert_{{id}}"` → `cert_001`）。
+数据表 CSV（表头逗号分隔，UTF-8 带 BOM 也认）或 JSON 数组。
+以 `_` 开头的键（`_note`）是注释，**不参与替换**——否则注释里写个示例 `{{字段}}` 就会被当成缺字段。
+
+实测：3 行 → `cert_001/002/003` 各 9 步全 PASS；三张成品互比 MAD **4.10 / 4.47 / 4.47**，证明替换真的落到像素而不是只改了 JSON。
+缺字段的行会跳过并报出来，不会静默出一张空图。
+
+### 7.2 `ps_fill.py`：拿设计稿改内容
+
+```jsonc
+{
+  "template": "tpl_cert.psd",
+  "out": {"dir": "_out/fill", "stem": "cert_A", "formats": ["png","psd"]},
+  "text":    {"Title": "2026 年度优秀员工", "Price": "奖金 ¥12,000"},
+  "images":  {"Photo": "new.png"},
+  "visible": {"Price": true}
+}
+```
+
+- 按**图层名**定位，`getByName` 不递归 → 脚本自带 `findL()` 深度优先。
+- 换图只能作用于**智能对象**（`placedLayerReplaceContents`）；普通像素层会直接报错并告诉你"右键→转换为智能对象"，不会静默失败。实测负向用例原文：`BG 不是智能对象（kind=LayerKind.NORMAL）`。
+- 目标层被隐藏或被图层筛选器挡住时选不中（报 `-25920`），所以替换前先 `visible = true`。
+- **模板文件一个字节都不改**：只 `saveAs` 到新名字，关文档用 `DONOTSAVECHANGES`。实测模板 MD5 跑前跑后都是 `dc22eabc…`。
+
+实测：回填 7 步 / 5 步全 PASS；两份回填成品图区 MAD **19.70**，证明换图生效。
+
+## 8. 文件清单
 
 - `scripts/ps_build.py` — 清单驱动器（主力）
+- `scripts/ps_batch.py` — 模板 × 数据表 批量出图
+- `scripts/ps_fill.py` — PSD 模板按图层名回填
 - `scripts/ps.py` — 连接/执行/图层树/卡片模板
 - `scripts/*.jsx` — do_cutout（抠图）、curves_tone（分通道曲线）、make_poster（旧模板）、list_layers、probe_*
 - `examples/manifest_basic.json` / `manifest_full.json` / `manifest_recovered.json` / `manifest_recovered2.json`
+- `examples/manifest_effects.json`（+ `manifest_effects_base.json` 无样式基准）、`manifest_variants.json`
+- `examples/batch_template.json` + `batch_rows.csv`、`examples/fill_cert.json`（配套 `assets/tpl_cert.psd`）
 - `docs/VERIFY.md` — 每条结论的实测记录与失败原文

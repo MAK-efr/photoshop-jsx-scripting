@@ -1,0 +1,30 @@
+{
+  "_note": "图层样式实测样例：一个 effect 对象里塞描边+投影，其余三块分别验浮雕/颜色叠加/外发光",
+  "out": {"dir": "_out", "stem": "effects", "formats": ["png", "psd"]},
+  "doc": {"w": 900, "h": 600, "dpi": 72, "bg": "14161A", "name": "PS-FX"},
+  "layers": [
+    {"type": "rect", "x1": 0, "y1": 0, "x2": 900, "y2": 600, "color": "14161A", "name": "BG"},
+
+    {"type": "shape", "shape": "rectangle", "x1": 60, "y1": 330, "x2": 380, "y2": 520,
+     "color": "3A3D42", "name": "Plate"},
+    {"type": "rect", "x1": 430, "y1": 330, "x2": 640, "y2": 470, "color": "C8892F", "name": "Chip"},
+
+    {"type": "text", "text": "PS 样式", "font": "NotoSansSC-Black", "size": 96,
+     "color": "F2EEE7", "x": 60, "y": 180, "name": "Title"},
+    {"type": "text", "text": "GLOW", "font": "NotoSansSC-Black", "size": 64,
+     "color": "2F7D6E", "x": 640, "y": 140, "name": "GlowWord"},
+
+    {"type": "effect", "target": "Title",
+     "stroke": {"size": 5, "color": "C8892F", "pos": "outside", "opacity": 100},
+     "shadow": {"distance": 10, "blur": 18, "opacity": 65, "angle": 120}},
+
+    {"type": "effect", "target": "Plate",
+     "bevel": {"depth": 120, "size": 8, "soften": 2, "angle": 120, "altitude": 30}},
+
+    {"type": "effect", "target": "Chip",
+     "overlay": {"color": "2F7D6E", "opacity": 85}},
+
+    {"type": "effect", "target": "GlowWord",
+     "glow": {"color": "C8892F", "opacity": 80, "blur": 22}}
+  ]
+}

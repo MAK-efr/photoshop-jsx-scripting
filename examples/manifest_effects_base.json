@@ -1,0 +1,15 @@
+{
+  "_note": "manifest_effects.json 的无样式基准版，只用于逐区域 MAD 对比",
+  "out": {"dir": "_out", "stem": "effects_base", "formats": ["png"]},
+  "doc": {"w": 900, "h": 600, "dpi": 72, "bg": "14161A", "name": "PS-FX-BASE"},
+  "layers": [
+    {"type": "rect", "x1": 0, "y1": 0, "x2": 900, "y2": 600, "color": "14161A", "name": "BG"},
+    {"type": "shape", "shape": "rectangle", "x1": 60, "y1": 330, "x2": 380, "y2": 520,
+     "color": "3A3D42", "name": "Plate"},
+    {"type": "rect", "x1": 430, "y1": 330, "x2": 640, "y2": 470, "color": "C8892F", "name": "Chip"},
+    {"type": "text", "text": "PS 样式", "font": "NotoSansSC-Black", "size": 96,
+     "color": "F2EEE7", "x": 60, "y": 180, "name": "Title"},
+    {"type": "text", "text": "GLOW", "font": "NotoSansSC-Black", "size": 64,
+     "color": "2F7D6E", "x": 640, "y": 140, "name": "GlowWord"}
+  ]
+}

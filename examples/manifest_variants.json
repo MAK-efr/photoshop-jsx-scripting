@@ -1,0 +1,22 @@
+{
+  "_note": "变体导出实测样例：@1.5x 纯缩放、1:1 cover 裁切、9:16 contain 补底",
+  "out": {
+    "dir": "_out", "stem": "variants", "formats": ["png"],
+    "variants": [
+      {"suffix": "@1.5x", "scale": 1.5, "formats": ["png"]},
+      {"suffix": "1x1", "w": 1080, "h": 1080, "mode": "cover", "formats": ["png"]},
+      {"suffix": "9x16", "w": 1080, "h": 1920, "mode": "contain", "formats": ["png"]}
+    ]
+  },
+  "doc": {"w": 1080, "h": 1350, "dpi": 72, "bg": "14161A", "name": "PS-VAR"},
+  "layers": [
+    {"type": "rect", "x1": 0, "y1": 0, "x2": 1080, "y2": 1350, "color": "14161A", "name": "BG"},
+    {"type": "rect", "x1": 84, "y1": 96, "x2": 180, "y2": 101, "color": "C8892F", "name": "RuleTop"},
+    {"type": "text", "text": "多尺寸", "font": "NotoSansSC-Black", "size": 118,
+     "color": "F2EEE7", "x": 84, "y": 350, "name": "Title"},
+    {"type": "text", "text": "one manifest / many sizes", "font": "NotoSansSC-Light", "size": 30,
+     "color": "8A8577", "x": 84, "y": 470, "name": "Sub"},
+    {"type": "shape", "shape": "ellipse", "x1": 700, "y1": 900, "x2": 996, "y2": 1196,
+     "stroke": {"w": 10, "color": "2F7D6E"}, "name": "Ring"}
+  ]
+}

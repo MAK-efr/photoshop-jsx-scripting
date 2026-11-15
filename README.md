@@ -1,14 +1,17 @@
 # Photoshop 脚本化出图（photoshop-jsx-scripting）
 
 用一份 JSON 清单驱动 Photoshop 出**分层可编辑**的 PSD / PNG / JPG / TIFF，不开界面、不点鼠标。
+再往上还有两条真实工作流：**一张数据表批量出图**，和**拿设计师的 PSD 按图层名换文案/换图**。
 
 Photoshop 是有官方自动化接口的（`Photoshop.Application` + ExtendScript），所以这个项目**不是逆向**，而是把 Adobe 已经给的东西接成一条能干活的生产线：Python 决定内容，PS 负责执行。
 
 ```bash
 python scripts/ps_build.py examples/manifest_basic.json       # 最小例子
 python scripts/ps_build.py examples/manifest_full.json        # 全特性：15 条指令 → 13 层
-python scripts/ps_build.py examples/manifest_recovered.json   # 渐变映射 + 马赛克 + 三层嵌套组
-python scripts/ps_build.py examples/manifest_recovered2.json  # 图层蒙版 + 矢量形状层 + WebP
+python scripts/ps_build.py examples/manifest_effects.json     # 图层样式：描边/投影/发光/叠加/浮雕
+python scripts/ps_build.py examples/manifest_variants.json    # 一次出 @1.5x / 1:1 / 9:16
+python scripts/ps_batch.py examples/batch_template.json --rows examples/batch_rows.csv
+python scripts/ps_fill.py  examples/fill_cert.json            # 打开 PSD 模板换文案换图
 ```
 
 产物（`examples/_out/`）：`caps.psd` 13 层可编辑 · `caps.png` 125 KB · `caps.jpg` 282 KB
@@ -25,9 +28,13 @@ python scripts/ps_build.py examples/manifest_recovered2.json  # 图层蒙版 + �
 | 剪贴蒙版 | ✅ | 白块内 (255,0,255)、块外 (26,26,26)，两版 MAD 5.10 |
 | **图层蒙版** | ✅ | `Mk` + `Nw=Chnl` + `At=Chnl/Chnl/**Msk**` + `Usng=UsrM/RvlA、HdAl、RvlS、HdSl`；`RvlS` 后选区外 alpha=0、选区内 255；蒙版可继续涂黑白 |
 | **矢量形状层** | ✅ | `contentLayer` + `type=solidColorLayer` + `shape=rectangle/ellipse` + `strokeStyle`；回读 `SOLIDFILL` 且仍有 1 条矢量路径 |
+| **图层样式** | ✅ 5 种 | 描边 / 投影 / 外发光 / 颜色叠加 / 斜面和浮雕，走 AM `Lefx`。逐区域像素证据：描边+投影 **MAD 10.85**、浮雕 **6.72**、发光 **6.85**、颜色叠加 **51.66**（预测色 `(70,127,101)` 与实测误差 ≤0.5） |
 | 调整层 | ✅ 14 种 | 曲线 / 色阶 / 色相饱和度 / 黑白 / 照片滤镜 / 自然饱和度 / 曝光度 / 色彩平衡 / 反相 / 色调分离 / 选取颜色 / 通道混合器 / 颜色查找 / **渐变映射** |
 | 调整参数真的生效 | ✅ | 曲线 MAD **29.51**、色阶 **18.32**、渐变映射 **45.84**（vs 基准图逐像素） |
-| 滤镜 | ✅ 12 种 | 高斯 12.25 / USM 7.87 / 加噪 68.72 / 反相 53.81 / 色调分离 39.86 / 高反差 26.41 / **马赛克 8.92** |
+| 滤镜 | ✅ 11 种 | 高斯 12.25 / USM 7.87 / 加噪 68.72 / 反相 53.81 / 色调分离 39.86 / 高反差 26.41 / **马赛克 8.92** |
+| **多尺寸变体导出** | ✅ | 源 1080×1350 → `@1.5x` **1620×2025**、`1:1` **1080×1080**、`9:16` **1080×1920**；副本改、主文档不动，`contain` 自动补底色 |
+| **批量出图** | ✅ | 模板 × CSV/JSON，`{{字段}}` 替换，`out.stem` 也能用变量；3 行实测各 9 步 PASS，三张成品互比 MAD **4.10 / 4.47 / 4.47** |
+| **PSD 模板回填** | ✅ | 按图层名改文字、按图层名换智能对象内容、切可见性；**模板 MD5 跑前跑后不变**；图区 MAD **19.70** |
 | 文字：点 / 段落 / 竖排 / 变形 | ✅ | 字体回读 `NotoSansSC-Black` 完全一致；`\r` 换行；行距需先 `useAutoLeading=false` |
 | 图片置入（cover/contain） | ✅ | `app.open` → `duplicate` → 按 bounds 缩放定位 |
 | 选区：羽化 / 收缩 / 反选 | ✅ | 100 px 选区 −10 → 80 px |
@@ -61,7 +68,7 @@ python scripts/ps_build.py examples/manifest_recovered2.json  # 图层蒙版 + �
 }
 ```
 
-图层类型：`rect` `text` `image` `group` `adjust` `filter` `clip` `erase`。字段速查见 [SKILL.md](SKILL.md#4-清单字段速查)。
+图层类型：`rect` `text` `image` `group` `adjust` `filter` `clip` `erase` `mask` `shape` `effect`。字段速查见 [SKILL.md](SKILL.md#4-清单字段速查)。
 
 ## 两轮复测，翻了六案
 
@@ -88,9 +95,9 @@ Photoshop 需支持 COM 自动化（CS6 以后都支持，本项目在 **25.0.0*
 
 **顺序很重要**：先完全退出所有 Photoshop 进程，然后让 COM 自己拉起；手动启动的实例不一定注册到 ROT，此时 `Dispatch` 会永久阻塞（见坑位 11）。
 
-## 14 个坑（全部用失败换来的）
+## 17 个坑（全部用失败换来的）
 
-摘要，完整版见 [SKILL.md](SKILL.md#3-坑位13-条全部踩过)：
+摘要，完整版见 [SKILL.md](SKILL.md#3-坑位17-条全部踩过)：
 
 1. `Documents.Count` 不可靠 → 只信 JSX 的 `app.documents.length`
 2. **`displayDialogs = ALL` 会挂死整条链路**（模态框无人可点，`DoJavaScriptFile` 永久阻塞）
@@ -106,15 +113,20 @@ Photoshop 需支持 COM 自动化（CS6 以后都支持，本项目在 **25.0.0*
 12. 子线程调 COM 必须先 `pythoncom.CoInitialize()`
 13. `getByName` 不递归，第 3 层起要写链式路径（这是组套组唯一的翻车点）
 14. **`charIDToTypeID` 只吃 4 个字符**：`Nw ` / `At ` / `Mk ` 只有 3 字符，会在构造描述符时就抛「非法参数」，看起来像「功能不支持」
+15. 图层样式一次 `setd` 是**整体替换**：多个效果必须塞进同一个 `Lefx`，分两次调用第二次会冲掉第一次且不报错；`enabled`/`present`/`showInDialog` 缺一个就「建了但看不见」；效果内部的 mode 是 charID `"Md  "`，不是图层的 `BlendMode.NORMAL`
+16. 换智能对象内容：目标层必须**唯一选中且可见**，隐藏或被图层筛选器挡住都报 `-25920`（文案是「命令当前不可用」）；普通像素层直接替换同样 `-25920`
+17. 批量的变量替换要**跳过 `_` 前缀注释键**，否则 `_note` 里写的 `{{字段}}` 示例会被当成缺字段，整行静默跳过
 
 ## 仓库结构
 
 ```
 SKILL.md              # 给 AI 用的技能说明（能力矩阵 + 坑位 + 字段速查）
 scripts/ps_build.py   # 清单驱动器（主力）
+scripts/ps_batch.py   # 模板 × 数据表 批量出图
+scripts/ps_fill.py    # PSD 模板按图层名回填
 scripts/ps.py         # 连接 / 执行 jsx / 图层树 / 卡片模板
 scripts/*.jsx         # 抠图、分通道曲线、海报模板、探针
-examples/             # 四份可直接跑的清单 + 素材
+examples/             # 六份清单 + 批量模板/数据表 + 回填清单 + 素材（含模板 PSD）
 docs/VERIFY.md        # 每条结论的实测记录与失败原文
 ```
 

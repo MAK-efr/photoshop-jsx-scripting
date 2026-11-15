@@ -1,0 +1,15 @@
+{
+  "_note": "模板回填样例：tpl_cert.psd 里 Title/Price 是文字层，Photo 是智能对象占位",
+  "template": "assets/tpl_cert.psd",
+  "out": {"dir": "_out/fill", "stem": "cert_2026", "formats": ["png", "psd"]},
+  "text": {
+    "Title": "2026 年度优秀员工",
+    "Price": "奖金 ¥12,000"
+  },
+  "images": {
+    "Photo": "assets/new_photo.png"
+  },
+  "visible": {
+    "Price": true
+  }
+}

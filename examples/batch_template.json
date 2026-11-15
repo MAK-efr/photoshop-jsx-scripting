@@ -1,0 +1,16 @@
+{
+  "_note": "批量模板：{{字段}} 由数据表逐行填充；out.stem 也用变量，成品按数据命名",
+  "out": {"dir": "_out/batch", "stem": "cert_{{id}}", "formats": ["png", "psd"]},
+  "doc": {"w": 900, "h": 600, "dpi": 72, "bg": "14161A", "name": "CERT"},
+  "layers": [
+    {"type": "rect", "x1": 0, "y1": 0, "x2": 900, "y2": 600, "color": "14161A", "name": "BG"},
+    {"type": "rect", "x1": 60, "y1": 60, "x2": 840, "y2": 64, "color": "C8892F", "name": "RuleTop"},
+    {"type": "rect", "x1": 60, "y1": 536, "x2": 840, "y2": 540, "color": "C8892F", "name": "RuleBot"},
+    {"type": "text", "text": "{{title}}", "font": "NotoSansSC-Black", "size": 84,
+     "color": "F2EEE7", "x": 60, "y": 210, "name": "Title"},
+    {"type": "text", "text": "{{name}}", "font": "NotoSansSC-Medium", "size": 46,
+     "color": "C8892F", "x": 60, "y": 320, "name": "Name"},
+    {"type": "text", "text": "{{dept}}  ·  NO.{{id}}", "font": "NotoSansSC-Light", "size": 26,
+     "color": "8A8577", "x": 60, "y": 400, "name": "Meta"}
+  ]
+}

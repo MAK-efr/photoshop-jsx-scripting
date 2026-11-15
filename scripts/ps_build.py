@@ -15,7 +15,9 @@
 清单结构
 {
   "out":  {"dir": "相对清单文件或绝对路径", "stem": "产物名",
-           "formats": ["psd","png","jpg","tif","pdf","webp"]},
+           "formats": ["psd","png","jpg","tif","pdf","webp"],
+           "variants": [{"suffix":"@2x","scale":1.5,"formats":["png"]},
+                        {"suffix":"1x1","w":1080,"h":1080,"mode":"cover"}]},
   "doc":  {"w": 1080, "h": 1350, "dpi": 72, "bg": "14161A", "name": "PS-Build"},
   "layers": [ 自底向上排列的图层对象 ]
 }
@@ -33,6 +35,9 @@
   mask    {mode:revealAll|hideAll|revealSelection|hideSelection, target?, sel?:[x1,y1,x2,y2]}
                          给目标层加真·图层蒙版（PS 25 实测可用；坑：charID 必须 4 字符）
   shape   {shape:rectangle|ellipse, x1,y1,x2,y2, color?, stroke?:{w,color}}   矢量形状层
+  effect  {target?, stroke?, shadow?, glow?, overlay?, bevel?}   图层样式
+                          ⚠ 一次 setd 会整体替换该层全部效果，所以多种效果必须写在
+                          同一个 effect 对象里，分两个 effect 对象只会留下后者
 
 用法
   python ps_build.py manifest.json
@@ -86,6 +91,55 @@ ADJ_KIND_STR = {
     "channelMixer": "channelMixer", "colorLookup": "colorLookup",
 }
 
+# 图层样式：清单里只写要改的键，其余取这里的默认值。
+EFF_DEF = {
+    "stroke":  {"pos": "outside", "color": "FFFFFF", "size": 6, "opacity": 100, "blend": "normal"},
+    "shadow":  {"blend": "multiply", "color": "000000", "opacity": 55, "angle": 120,
+                "distance": 12, "choke": 0, "blur": 18},
+    "glow":    {"blend": "screen", "color": "C8892F", "opacity": 70, "blur": 14, "choke": 0},
+    "overlay": {"blend": "normal", "color": "C8892F", "opacity": 100},
+    "bevel":   {"style": "inner", "angle": 120, "altitude": 30, "depth": 100,
+                "size": 6, "soften": 0, "hi": "FFFFFF", "hiO": 75, "sh": "000000", "shO": 75},
+}
+# 效果的混合模式是 charID（恰 4 字符），跟图层混合模式（那套是 BlendMode 枚举名）不是一套写法
+EFF_BLEND = {
+    "normal": "Nrml", "multiply": "Mltp", "screen": "Scrn", "overlay": "Ovrl",
+    "softlight": "SftL", "hardlight": "HrdL", "darken": "Drkn", "lighten": "Lght",
+    "difference": "Dfrn", "color": "Clr ", "luminosity": "Lmns", "lineardodge": "LnrD",
+}
+EFF_POS = {"outside": "OutF", "inside": "InsF", "center": "CtrF"}
+BEVEL_STYLE = {"inner": "innerBevel", "outer": "outerBevel", "emboss": "emboss",
+               "pillow": "pillowEmboss", "stroke": "strokeEmboss"}
+
+
+def _fx_spec(L):
+    """把清单里的效果字段翻成 JS 可用的 dict（JSON 就是合法 JS 对象字面量）。"""
+    spec = {}
+    for k in ("stroke", "shadow", "glow", "overlay", "bevel"):
+        if k not in L or not L[k]:
+            continue
+        d = dict(EFF_DEF[k])
+        d.update(L[k])
+        if "blend" in d:
+            b = str(d["blend"]).lower()
+            if b not in EFF_BLEND:
+                raise ValueError("未知效果混合模式 %r（可用：%s）" % (d["blend"], "/".join(EFF_BLEND)))
+            d["blend"] = EFF_BLEND[b]
+        if k == "stroke":
+            pz = str(d.get("pos", "outside")).lower()
+            if pz not in EFF_POS:
+                raise ValueError("未知描边位置 %r（可用 outside/inside/center）" % d["pos"])
+            d["pos"] = EFF_POS[pz]
+        if k == "bevel":
+            st = str(d.get("style", "inner")).lower()
+            if st not in BEVEL_STYLE:
+                raise ValueError("未知浮雕样式 %r（可用 %s）" % (d["style"], "/".join(BEVEL_STYLE)))
+            d["style"] = BEVEL_STYLE[st]
+        spec[k] = d
+    if not spec:
+        raise ValueError("effect 至少要给 stroke/shadow/glow/overlay/bevel 之一")
+    return spec
+
 
 # ---------------------------------------------------------------- 校验
 def validate(m):
@@ -105,6 +159,23 @@ def validate(m):
     for f in fmts:
         if f.lower() not in ("psd", "png", "jpg", "tif", "pdf", "webp"):
             errs.append("不支持的导出格式: %s" % f)
+    OKFMT = ("psd", "png", "jpg", "tif", "pdf", "webp")
+    for i, v in enumerate(out.get("variants") or []):
+        vp = "out.variants[%d]" % i
+        if not isinstance(v, dict):
+            errs.append(vp + " 不是对象")
+            continue
+        if not v.get("suffix"):
+            errs.append(vp + " 缺少 suffix（产物名后缀，如 @2x / 1x1）")
+        if v.get("scale") is None and not (v.get("w") and v.get("h")):
+            errs.append(vp + " 必须给 scale，或同时给 w 和 h")
+        if v.get("scale") is not None and (v.get("w") or v.get("h")):
+            errs.append(vp + " scale 与 w/h 只能二选一")
+        if v.get("mode") and v["mode"] not in ("contain", "cover"):
+            errs.append(vp + " mode 只能 contain/cover")
+        for f in (v.get("formats") or fmts):
+            if str(f).lower() not in OKFMT:
+                errs.append("%s 不支持的格式: %s" % (vp, f))
     if not isinstance(m.get("layers"), list) or not m["layers"]:
         errs.append("layers 必须是非空数组")
     seen_names = set()
@@ -168,6 +239,16 @@ def validate(m):
                 sel = L.get("sel")
                 if sel is not None and (not isinstance(sel, list) or len(sel) != 4):
                     errs.append("%s sel 必须是 [x1,y1,x2,y2]" % p)
+            elif t == "effect":
+                if not any(k in L for k in ("stroke", "shadow", "glow", "overlay", "bevel")):
+                    errs.append("%s effect 至少要给 stroke/shadow/glow/overlay/bevel 之一" % p)
+                for k in ("stroke", "shadow", "glow", "overlay", "bevel"):
+                    if L.get(k) is not None and not isinstance(L[k], dict):
+                        errs.append("%s %s 必须是对象" % (p, k))
+                try:
+                    _fx_spec(L)
+                except ValueError as e:
+                    errs.append("%s %s" % (p, e))
             elif t in ("clip", "erase"):
                 pass
             else:
@@ -203,6 +284,7 @@ PRELUDE = r'''#target photoshop
     var OUT = "%(out)s";
     var STEM = "%(stem)s";
     var FORMATS = %(formats)s;
+    var VARIANTS = %(variants)s;
     var log = [];
     function L(s) { log.push(s); }
     function flush() {
@@ -211,6 +293,23 @@ PRELUDE = r'''#target photoshop
     }
     function hex(h) { var c = new SolidColor(); c.rgb.hexValue = h; return c; }
     var step = 0, ok = 0, bad = 0;
+    // charID 必须恰好 4 字符，3 字符会在构造 descriptor 时就抛「非法参数」，
+    // 报错位置离真正原因很远。这里先自检一遍，把问题在日志里点出来。
+    // 新增 charID 请一并登记到这张表。
+    (function () {
+        var ids = ["Md  ", "Sz  ", "Styl", "FStl", "OutF", "InsF", "CtrF", "PntT", "FrFl",
+                   "SClr", "Opct", "Clr ", "Lefx", "FrFX", "Scl ", "Nw  ", "At  ", "Mk  ",
+                   "Chnl", "Msk ", "Usng", "UsrM", "RvlA", "HdAl", "RvlS", "HdSl",
+                   "Rd  ", "Grn ", "Bl  ", "T   ", "null", "Prpr", "Lyr ", "Ordn", "Trgt",
+                   "AdjL", "Cmps", "Crv ", "CrvA", "Adjs", "Hrzn", "Vrtc", "Pnt ",
+                   "Inpt", "Gmm ", "Outt", "LvlA", "HStr", "Strt", "Lght", "Clrz",
+                   "Msc ", "ClSz"];
+        var bad4 = [];
+        for (var i = 0; i < ids.length; i++) {
+            if (ids[i].length !== 4) bad4.push(ids[i] + "(" + ids[i].length + ")");
+        }
+        if (bad4.length) L("!! charID 长度异常（必须 4 字符）: " + bad4.join(", "));
+    })();
     function T(name, fn) {
         var myStep = ++step;   // 必须捕获，嵌套 T 执行期全局 step 已变，直接读会串号
         try { var r = fn(); ok++; L("PASS " + myStep + " " + name + (r != null ? "  => " + r : "")); }
@@ -284,6 +383,127 @@ PRELUDE = r'''#target photoshop
         d.putObject(stringIDToTypeID("using"), stringIDToTypeID("contentLayer"), d1);
         executeAction(charIDToTypeID("Mk  "), d, DialogModes.NO);
         return D.activeLayer;
+    }
+    // ---- 图层样式（ActionManager layerEffects）----
+    // 铁律：setd 对 Lefx 是**整体替换**，不是增量。多个效果必须塞进同一个 descriptor，
+    // 分两次调用只会留下最后一次（社区原话：any other styles applied they will be lost）。
+    function rgbD(hx) {
+        var c = hexRGB(hx), d = new ActionDescriptor();
+        d.putDouble(charIDToTypeID("Rd  "), c[0]);
+        d.putDouble(charIDToTypeID("Grn "), c[1]);
+        d.putDouble(charIDToTypeID("Bl  "), c[2]);
+        return d;
+    }
+    function fxBase() {
+        var e = new ActionDescriptor();
+        e.putBoolean(stringIDToTypeID("enabled"), true);
+        e.putBoolean(stringIDToTypeID("present"), true);      // present/showInDialog 缺一个就"建了但看不见"
+        e.putBoolean(stringIDToTypeID("showInDialog"), true);
+        return e;
+    }
+    function fxStroke(o) {
+        var e = fxBase();
+        e.putEnumerated(charIDToTypeID("Styl"), charIDToTypeID("FStl"), charIDToTypeID(o.pos));
+        e.putEnumerated(charIDToTypeID("PntT"), charIDToTypeID("FrFl"), charIDToTypeID("SClr"));
+        e.putEnumerated(charIDToTypeID("Md  "), charIDToTypeID("BlnM"), charIDToTypeID(o.blend));
+        e.putUnitDouble(charIDToTypeID("Opct"), charIDToTypeID("#Prc"), o.opacity);
+        e.putUnitDouble(charIDToTypeID("Sz  "), charIDToTypeID("#Pxl"), o.size);
+        e.putObject(charIDToTypeID("Clr "), charIDToTypeID("RGBC"), rgbD(o.color));
+        e.putBoolean(stringIDToTypeID("overprint"), false);
+        return e;
+    }
+    function fxShadow(o) {
+        var e = fxBase();
+        e.putEnumerated(stringIDToTypeID("mode"), stringIDToTypeID("blendMode"), stringIDToTypeID(o.blend));
+        e.putObject(stringIDToTypeID("color"), charIDToTypeID("RGBC"), rgbD(o.color));
+        e.putUnitDouble(stringIDToTypeID("opacity"), stringIDToTypeID("percentUnit"), o.opacity);
+        e.putBoolean(stringIDToTypeID("useGlobalAngle"), false);
+        e.putUnitDouble(stringIDToTypeID("localLightingAngle"), stringIDToTypeID("angleUnit"), o.angle);
+        e.putUnitDouble(stringIDToTypeID("distance"), stringIDToTypeID("pixelsUnit"), o.distance);
+        e.putUnitDouble(stringIDToTypeID("chokeMatte"), stringIDToTypeID("pixelsUnit"), o.choke);
+        e.putUnitDouble(stringIDToTypeID("blur"), stringIDToTypeID("pixelsUnit"), o.blur);
+        e.putUnitDouble(stringIDToTypeID("noise"), stringIDToTypeID("percentUnit"), 0);
+        e.putBoolean(stringIDToTypeID("antiAlias"), false);
+        var ts = new ActionDescriptor();
+        ts.putString(stringIDToTypeID("name"), "Linear");
+        e.putObject(stringIDToTypeID("transferSpec"), stringIDToTypeID("shapeCurveType"), ts);
+        e.putBoolean(stringIDToTypeID("layerConceals"), true);
+        return e;
+    }
+    function fxGlow(o) {
+        var e = fxBase();
+        e.putEnumerated(stringIDToTypeID("mode"), stringIDToTypeID("blendMode"), stringIDToTypeID(o.blend));
+        e.putObject(stringIDToTypeID("color"), charIDToTypeID("RGBC"), rgbD(o.color));
+        e.putUnitDouble(stringIDToTypeID("opacity"), stringIDToTypeID("percentUnit"), o.opacity);
+        e.putUnitDouble(stringIDToTypeID("blur"), stringIDToTypeID("pixelsUnit"), o.blur);
+        e.putUnitDouble(stringIDToTypeID("chokeMatte"), stringIDToTypeID("pixelsUnit"), o.choke);
+        e.putUnitDouble(stringIDToTypeID("noise"), stringIDToTypeID("percentUnit"), 0);
+        e.putEnumerated(stringIDToTypeID("glowTechnique"), stringIDToTypeID("glowTechnique"), stringIDToTypeID("softerGlow"));
+        e.putUnitDouble(stringIDToTypeID("quality"), stringIDToTypeID("percentUnit"), 100);
+        return e;
+    }
+    function fxOverlay(o) {
+        var e = fxBase();
+        e.putEnumerated(stringIDToTypeID("mode"), stringIDToTypeID("blendMode"), stringIDToTypeID(o.blend));
+        e.putObject(stringIDToTypeID("color"), charIDToTypeID("RGBC"), rgbD(o.color));
+        e.putUnitDouble(stringIDToTypeID("opacity"), stringIDToTypeID("percentUnit"), o.opacity);
+        return e;
+    }
+    function fxBevel(o) {
+        var e = fxBase();
+        e.putEnumerated(stringIDToTypeID("style"), stringIDToTypeID("bevelStyle"), stringIDToTypeID(o.style));
+        e.putEnumerated(stringIDToTypeID("direction"), stringIDToTypeID("bevelDirection"), stringIDToTypeID("up"));
+        e.putBoolean(stringIDToTypeID("useGlobalAngle"), false);
+        e.putUnitDouble(stringIDToTypeID("angle"), stringIDToTypeID("angleUnit"), o.angle);
+        e.putUnitDouble(stringIDToTypeID("altitude"), stringIDToTypeID("angleUnit"), o.altitude);
+        e.putUnitDouble(stringIDToTypeID("strength"), stringIDToTypeID("percentUnit"), o.depth);
+        e.putUnitDouble(stringIDToTypeID("blur"), stringIDToTypeID("pixelsUnit"), o.size);
+        e.putUnitDouble(stringIDToTypeID("soften"), stringIDToTypeID("pixelsUnit"), o.soften);
+        e.putEnumerated(stringIDToTypeID("highlightMode"), stringIDToTypeID("blendMode"), stringIDToTypeID("screen"));
+        e.putObject(stringIDToTypeID("highlightColor"), charIDToTypeID("RGBC"), rgbD(o.hi));
+        e.putUnitDouble(stringIDToTypeID("highlightOpacity"), stringIDToTypeID("percentUnit"), o.hiO);
+        e.putEnumerated(stringIDToTypeID("shadowMode"), stringIDToTypeID("blendMode"), stringIDToTypeID("multiply"));
+        e.putObject(stringIDToTypeID("shadowColor"), charIDToTypeID("RGBC"), rgbD(o.sh));
+        e.putUnitDouble(stringIDToTypeID("shadowOpacity"), stringIDToTypeID("percentUnit"), o.shO);
+        e.putBoolean(stringIDToTypeID("useTexture"), false);
+        return e;
+    }
+    function applyFX(spec) {
+        var d = new ActionDescriptor();
+        var r = new ActionReference();
+        r.putProperty(charIDToTypeID("Prpr"), charIDToTypeID("Lefx"));
+        r.putEnumerated(charIDToTypeID("Lyr "), charIDToTypeID("Ordn"), charIDToTypeID("Trgt"));
+        d.putReference(charIDToTypeID("null"), r);
+        var fx = new ActionDescriptor();
+        fx.putUnitDouble(charIDToTypeID("Scl "), charIDToTypeID("#Prc"), 100);
+        var n = 0;
+        if (spec.stroke) { fx.putObject(charIDToTypeID("FrFX"), charIDToTypeID("FrFX"), fxStroke(spec.stroke)); n++; }
+        if (spec.shadow) { fx.putObject(stringIDToTypeID("dropShadow"), stringIDToTypeID("dropShadow"), fxShadow(spec.shadow)); n++; }
+        if (spec.glow) { fx.putObject(stringIDToTypeID("outerGlow"), stringIDToTypeID("outerGlow"), fxGlow(spec.glow)); n++; }
+        if (spec.overlay) { fx.putObject(stringIDToTypeID("solidFill"), stringIDToTypeID("solidFill"), fxOverlay(spec.overlay)); n++; }
+        if (spec.bevel) { fx.putObject(stringIDToTypeID("bevelEmboss"), stringIDToTypeID("bevelEmboss"), fxBevel(spec.bevel)); n++; }
+        if (n === 0) throw new Error("没有指定任何效果");
+        d.putObject(charIDToTypeID("T   "), charIDToTypeID("Lefx"), fx);
+        executeAction(charIDToTypeID("setd"), d, DialogModes.NO);
+        return n;
+    }
+    // 回读：层上真的挂了几个生效的效果（不信"命令没报错"就当成功）
+    function countFX() {
+        var ref = new ActionReference();
+        ref.putEnumerated(charIDToTypeID("Lyr "), charIDToTypeID("Ordn"), charIDToTypeID("Trgt"));
+        var ld = executeActionGet(ref);
+        if (!ld.hasKey(stringIDToTypeID("layerEffects"))) return 0;
+        var fx = ld.getObjectValue(stringIDToTypeID("layerEffects"));
+        var keys = ["frameFX", "dropShadow", "outerGlow", "solidFill", "bevelEmboss"];
+        var c = 0;
+        for (var i = 0; i < keys.length; i++) {
+            var k = stringIDToTypeID(keys[i]);
+            if (!fx.hasKey(k)) continue;
+            var on = true;
+            try { on = fx.getObjectValue(k).getBoolean(stringIDToTypeID("enabled")); } catch (e) { on = true; }
+            if (on) c++;
+        }
+        return c;
     }
     function setCurves(pts) {
         var d = new ActionDescriptor();
@@ -372,55 +592,107 @@ PRELUDE = r'''#target photoshop
     // 不删它（删唯一图层会报错），而是把它当底色层复用 —— 见下面 bg 的生成代码。
 '''
 
-EPILOGUE = r'''
+SAVE_FMT_JS = r'''
     // ---------- 导出 ----------
+    // 抽成函数：主文档与变体共用同一套分支；变体必须能对不同 doc 保存。
+    function saveFmt(doc, fmt, base) {
+        app.activeDocument = doc;      // webp 走 ActionManager save，它只认"当前文档"
+        var file = new File(base + "." + fmt);
+        if (fmt === "png") {
+            // 实测：不显式指定 compression 时 PS 存的是"几乎不压缩"的 PNG，
+            // 1080x1350 平涂卡片会到 4.3 MB（≈ 原始字节数）。必须给 9。
+            var po = new PNGSaveOptions(); po.compression = 9; po.interlaced = false;
+            doc.saveAs(file, po, true, Extension.LOWERCASE);
+        } else if (fmt === "psd") {
+            var o = new PhotoshopSaveOptions(); o.layers = true; o.embedColorProfile = true;
+            doc.saveAs(file, o, false, Extension.LOWERCASE);
+        } else if (fmt === "jpg") {
+            var j = new JPEGSaveOptions(); j.quality = 12; j.embedColorProfile = true;
+            doc.saveAs(file, j, true, Extension.LOWERCASE);
+        } else if (fmt === "tif") {
+            var t = new TiffSaveOptions(); t.imageCompression = TIFFEncoding.TIFFLZW; t.layers = true;
+            doc.saveAs(file, t, true, Extension.LOWERCASE);
+        } else if (fmt === "pdf") {
+            doc.saveAs(file, new PDFSaveOptions(), true, Extension.LOWERCASE);
+        } else if (fmt === "webp") {
+            // 实测：SaveDocumentType.WEBP 不存在、WebPSaveOptions 无构造器，
+            // 唯一可用的路是 ActionManager save + as=WebPFormat（PS 2022+ 原生支持）
+            var wd = new ActionDescriptor();
+            var wd2 = new ActionDescriptor();
+            wd2.putEnumerated(stringIDToTypeID("compression"), stringIDToTypeID("WebPCompression"),
+                              stringIDToTypeID("compressionLossy"));
+            wd2.putInteger(stringIDToTypeID("quality"), 82);
+            wd2.putBoolean(stringIDToTypeID("includeXMPData"), false);
+            wd2.putBoolean(stringIDToTypeID("includeEXIFData"), false);
+            wd2.putBoolean(stringIDToTypeID("includePsExtras"), false);
+            wd.putObject(stringIDToTypeID("as"), stringIDToTypeID("WebPFormat"), wd2);
+            wd.putPath(stringIDToTypeID("in"), file);
+            wd.putBoolean(stringIDToTypeID("copy"), true);
+            wd.putBoolean(stringIDToTypeID("lowerCase"), true);
+            executeAction(stringIDToTypeID("save"), wd, DialogModes.NO);
+        } else {
+            throw new Error("不支持的格式 " + fmt);
+        }
+        return file.fsName;
+    }
+'''
+
+EPILOGUE = SAVE_FMT_JS + r'''
     for (var i = 0; i < FORMATS.length; i++) {
-        var f = FORMATS[i];
         (function (fmt) {
-            T("export " + fmt, function () {
-                var file = new File(OUT + "/" + STEM + "." + fmt);
-                if (fmt === "png") {
-                    // 实测：不显式指定 compression 时 PS 存的是"几乎不压缩"的 PNG，
-                    // 1080x1350 平涂卡片会到 4.3 MB（≈ 原始字节数）。必须给 9。
-                    var po = new PNGSaveOptions(); po.compression = 9; po.interlaced = false;
-                    D.saveAs(file, po, true, Extension.LOWERCASE);
+            T("export " + fmt, function () { return saveFmt(D, fmt, OUT + "/" + STEM); });
+        })(FORMATS[i]);
+    }
+
+    // ---------- 变体：多倍率 / 多比例 ----------
+    // 一律 duplicate 出去改，绝不动主文档；改完 close，主文档继续可用。
+    for (var vi = 0; vi < VARIANTS.length; vi++) {
+        (function (v) {
+            T("variant " + v.suffix, function () {
+                app.activeDocument = D;
+                var dup = D.duplicate("VAR_" + v.suffix, false);
+                try {
+                    if (v.scale) {
+                        dup.resizeImage(new UnitValue(v.scale * 100, "percent"),
+                                        new UnitValue(v.scale * 100, "percent"),
+                                        null, ResampleMethod.BICUBIC);
+                    } else if (v.w && v.h) {
+                        var bw = dup.width.as("px"), bh = dup.height.as("px");
+                        var s = (v.mode === "cover") ? Math.max(v.w / bw, v.h / bh)
+                                                     : Math.min(v.w / bw, v.h / bh);
+                        dup.resizeImage(new UnitValue(s * 100, "percent"),
+                                        new UnitValue(s * 100, "percent"),
+                                        null, ResampleMethod.BICUBIC);
+                        dup.resizeCanvas(new UnitValue(v.w, "px"), new UnitValue(v.h, "px"),
+                                         AnchorPosition.MIDDLECENTER);
+                        // contain 放大画布后四周是透明的，用 bg 补一层底，否则成品露空洞
+                        if (v.bg) {
+                            var nl = dup.artLayers.add();
+                            nl.move(dup.layers[dup.layers.length - 1], ElementPlacement.PLACEAFTER);
+                            nl.name = "VARBG";
+                            dup.activeLayer = nl;
+                            dup.selection.selectAll();
+                            dup.selection.fill(hex(v.bg));
+                            dup.selection.deselect();
+                        }
+                    }
+                    var ff = v.formats || FORMATS;
+                    var res = [];
+                    for (var j = 0; j < ff.length; j++) {
+                        res.push(saveFmt(dup, ff[j], OUT + "/" + STEM + "_" + v.suffix));
+                    }
+                    return res.join(" | ") + "  " + dup.width.as("px") + "x" + dup.height.as("px");
+                } finally {
+                    dup.close(SaveOptions.DONOTSAVECHANGES);
                 }
-                else if (fmt === "psd") {
-                    var o = new PhotoshopSaveOptions(); o.layers = true; o.embedColorProfile = true;
-                    D.saveAs(file, o, false, Extension.LOWERCASE);
-                } else if (fmt === "jpg") {
-                    var j = new JPEGSaveOptions(); j.quality = 12; j.embedColorProfile = true;
-                    D.saveAs(file, j, true, Extension.LOWERCASE);
-                } else if (fmt === "tif") {
-                    var t = new TiffSaveOptions(); t.imageCompression = TIFFEncoding.TIFFLZW; t.layers = true;
-                    D.saveAs(file, t, true, Extension.LOWERCASE);
-                } else if (fmt === "pdf") {
-                    D.saveAs(file, new PDFSaveOptions(), true, Extension.LOWERCASE);
-                } else if (fmt === "webp") {
-                    // 实测：SaveDocumentType.WEBP 不存在、WebPSaveOptions 无构造器，
-                    // 唯一可用的路是 ActionManager save + as=WebPFormat（PS 2022+ 原生支持）
-                    var wd = new ActionDescriptor();
-                    var wd2 = new ActionDescriptor();
-                    wd2.putEnumerated(stringIDToTypeID("compression"), stringIDToTypeID("WebPCompression"),
-                                      stringIDToTypeID("compressionLossy"));
-                    wd2.putInteger(stringIDToTypeID("quality"), 82);
-                    wd2.putBoolean(stringIDToTypeID("includeXMPData"), false);
-                    wd2.putBoolean(stringIDToTypeID("includeEXIFData"), false);
-                    wd2.putBoolean(stringIDToTypeID("includePsExtras"), false);
-                    wd.putObject(stringIDToTypeID("as"), stringIDToTypeID("WebPFormat"), wd2);
-                    wd.putPath(stringIDToTypeID("in"), file);
-                    wd.putBoolean(stringIDToTypeID("copy"), true);
-                    wd.putBoolean(stringIDToTypeID("lowerCase"), true);
-                    executeAction(stringIDToTypeID("save"), wd, DialogModes.NO);
-                }
-                return file.fsName;
             });
-        })(f);
+        })(VARIANTS[vi]);
     }
 
     L("");
     L("SUMMARY pass=" + ok + " fail=" + bad + " layers=" + D.layers.length
-      + " size=" + D.width.as("px") + "x" + D.height.as("px"));
+      + " size=" + D.width.as("px") + "x" + D.height.as("px")
+      + " variants=" + VARIANTS.length);
     // 先关自己这一份，再核对文档数——否则日志会把"自己那份"算成残留
     D.close(SaveOptions.DONOTSAVECHANGES);
     L("closed own doc only");
@@ -636,6 +908,22 @@ def emit_layer(L, depth=0, stack=None):
             out.append('  D.selection.deselect();')
         out.append('  return "mask=%s on " + D.activeLayer.name;' % mode)
         out.append('});')
+    elif t == "effect":
+        spec = _fx_spec(L)
+        tgt = L.get("target")
+        # 日志里带上目标层名，否则同时挂四个样式会看到四行 "effect effect_0"
+        label = L.get("name") or ("%s<-%s" % (t, tgt or "lastPixel"))
+        out.append('T(%s, function () {' % _s("effect " + label))
+        if tgt:
+            out.append('  D.activeLayer = D.layers.getByName(%s);' % _s(tgt))
+        else:
+            out.append('  if (!lastPixel) throw new Error("没有可加样式的图层"); D.activeLayer = lastPixel;')
+        out.append('  var n = applyFX(%s);' % json.dumps(spec, ensure_ascii=False))
+        out.append('  var got = countFX();')
+        # 回读不到就等于没生效——"命令没报错"不算证据
+        out.append('  if (got !== n) throw new Error("请求 " + n + " 个效果，回读只有 " + got + " 个");')
+        out.append('  return "effects=" + got + " on " + D.activeLayer.name;')
+        out.append('});')
     else:
         raise ValueError("未知 type: %s" % t)
     return out
@@ -644,10 +932,19 @@ def emit_layer(L, depth=0, stack=None):
 def build_jsx(m, out_dir, stem):
     doc = m["doc"]
     fmts = [f.lower() for f in (m["out"].get("formats") or ["png", "psd"])]
+    variants = []
+    for v in (m["out"].get("variants") or []):
+        vv = dict(v)
+        if vv.get("formats"):
+            vv["formats"] = [f.lower() for f in vv["formats"]]
+        if vv.get("w") and vv.get("h") and not vv.get("bg"):
+            vv["bg"] = doc.get("bg")      # contain 放大画布时的补底色，默认跟文档底色一致
+        variants.append(vv)
     head = PRELUDE % {
         "out": str(out_dir).replace("\\", "/"),
         "stem": stem,
         "formats": json.dumps(fmts),
+        "variants": json.dumps(variants, ensure_ascii=False),
         "W": doc["w"], "H": doc["h"], "DPI": doc.get("dpi", 72),
         "NAME": _s(doc.get("name", "PS-Build")),
     }
@@ -663,18 +960,11 @@ def build_jsx(m, out_dir, stem):
     return head + "\n".join(body) + EPILOGUE
 
 
-def main():
-    ap = argparse.ArgumentParser(description="用 JSON 清单驱动 Photoshop 出图")
-    ap.add_argument("manifest")
-    ap.add_argument("--out", help="覆盖清单里的 out.dir")
-    ap.add_argument("--stem", help="覆盖清单里的 out.stem")
-    ap.add_argument("--dry-run", action="store_true", help="只生成 jsx，不执行")
-    ap.add_argument("--check", action="store_true", help="只校验清单")
-    a = ap.parse_args()
-
-    mpath = Path(a.manifest).resolve()
+def load_manifest(path):
+    """读清单，并把 image.path 按"清单所在目录"解析成绝对路径（清单可整包搬走）。"""
+    mpath = Path(path).resolve()
     m = json.loads(mpath.read_text(encoding="utf-8"))
-    # 图片路径按"清单文件所在目录"解析，清单可以整体搬走
+
     def _abs(layers):
         for L in layers:
             if L.get("type") == "image" and L.get("path"):
@@ -684,44 +974,78 @@ def main():
             elif L.get("type") == "group":
                 _abs(L.get("layers") or [])
     _abs(m.get("layers") or [])
+    return m, mpath
+
+
+def run_manifest(m, base_dir, out=None, stem=None, dry_run=False):
+    """校验 → 生成 jsx → 执行 → 回读日志。
+
+    返回 (out_dir, jsx_path, log_text)。校验失败抛 ValueError，调用方自己决定怎么报。
+    抽成函数是为了让 ps_batch.py 能在同一进程里循环跑，不必反复起进程。
+    """
     errs = validate(m)
     if errs:
-        print("清单有问题，未执行：")
-        for e in errs:
-            print("  -", e)
-        return 2
-    if a.check:
-        print("清单校验通过：layers=%d" % len(m["layers"]))
-        return 0
-
-    # out.dir 同样按"清单文件所在目录"解析，整包搬走不变
-    od = Path(a.out or m["out"]["dir"])
+        raise ValueError("清单有问题：\n  - " + "\n  - ".join(errs))
+    od = Path(out or m["out"]["dir"])
     if not od.is_absolute():
-        od = mpath.parent / od
+        od = Path(base_dir) / od
     out_dir = od.resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
-    stem = a.stem or m["out"]["stem"]
+    stem = stem or m["out"]["stem"]
     jsx = build_jsx(m, out_dir, stem)
     jf = out_dir / (stem + "_gen.jsx")
     jf.write_text(jsx, encoding="utf-8")
+    if dry_run:
+        return out_dir, jf, ""
+    ps.run_jsx(jf)
+    log = out_dir / (stem + ".log")
+    txt = log.read_text(encoding="utf-8", errors="replace") if log.is_file() else ""
+    return out_dir, jf, txt
+
+
+def main():
+    ap = argparse.ArgumentParser(description="用 JSON 清单驱动 Photoshop 出图")
+    ap.add_argument("manifest")
+    ap.add_argument("--out", help="覆盖清单里的 out.dir")
+    ap.add_argument("--stem", help="覆盖清单里的 out.stem")
+    ap.add_argument("--dry-run", action="store_true", help="只生成 jsx，不执行")
+    ap.add_argument("--check", action="store_true", help="只校验清单")
+    a = ap.parse_args()
+
+    m, mpath = load_manifest(a.manifest)
+    if a.check:
+        errs = validate(m)
+        if errs:
+            print("清单有问题，未执行：")
+            for e in errs:
+                print("  -", e)
+            return 2
+        print("清单校验通过：layers=%d  变体=%d"
+              % (len(m["layers"]), len(m["out"].get("variants") or [])))
+        return 0
+
+    try:
+        out_dir, jf, txt = run_manifest(m, mpath.parent, a.out, a.stem, a.dry_run)
+    except ValueError as e:
+        print(e)
+        return 2
     print("jsx:", jf)
     if a.dry_run:
         return 0
 
-    ps.run_jsx(jf)
-    log = out_dir / (stem + ".log")
-    if log.is_file():
-        txt = log.read_text(encoding="utf-8", errors="replace")
-        print(txt)
-        if "FAIL " in txt:
-            print("!! 日志里有 FAIL，见上")
-    else:
-        print("!! 没有日志，JSX 可能未跑完")
+    print(txt if txt else "!! 没有日志，JSX 可能未跑完")
+    if "FAIL " in txt:
+        print("!! 日志里有 FAIL，见上")
 
     for f in (m["out"].get("formats") or ["png", "psd"]):
-        p = out_dir / ("%s.%s" % (stem, f))
+        p = out_dir / ("%s.%s" % (jf.stem[:-4], f))
         print(("OK   " if p.is_file() else "MISS ") + str(p)
               + ("  %d B" % p.stat().st_size if p.is_file() else ""))
+    for v in (m["out"].get("variants") or []):
+        for f in (v.get("formats") or m["out"].get("formats") or ["png"]):
+            p = out_dir / ("%s_%s.%s" % (jf.stem[:-4], v["suffix"], f))
+            print(("OK   " if p.is_file() else "MISS ") + str(p)
+                  + ("  %d B" % p.stat().st_size if p.is_file() else ""))
     return 0
 
 
