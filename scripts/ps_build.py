@@ -8,10 +8,13 @@
      PS 会弹出无人可点的模态框，整条 COM 链路永久阻塞（实测卡死 4 分钟，只能杀进程）。
   4. 日志由 JSX 写文件、Python 读文件；JSX 返回值不可靠。
   5. 组内图层必须 layer.move(group, INSIDE)；artLayers.add() 不会自动进组。
+  6. 组套组不能 move（LayerSet→LayerSet 恒报「非法参数」），要在父组的锚点层上
+     原位 make layerSection；且 getByName 不递归，第 3 层起必须写链式路径。
+  7. adjust 的 type 一律用**类 ID**（如 gradientMapClass），事件 ID 会报"当前不可用"。
 
 清单结构
 {
-  "out":  {"dir": "绝对或相对目录", "stem": "产物名", "formats": ["psd","png","jpg","tif"]},
+  "out":  {"dir": "相对清单文件或绝对路径", "stem": "产物名", "formats": ["psd","png","jpg","tif"]},
   "doc":  {"w": 1080, "h": 1350, "dpi": 72, "bg": "14161A", "name": "PS-Build"},
   "layers": [ 自底向上排列的图层对象 ]
 }
@@ -21,9 +24,9 @@
   text    {text,font,size,color,x,y,tracking?,leading?,justify?,para:[w,h],
            vertical?,warp?,bend?,opacity?,blend?,name?}
   image   {path,x,y,w,h,fit?:cover|contain,opacity?,blend?,name?}
-  group   {name,opacity?,blend?,layers:[子图层]}
-  adjust  {adj:curves|levels|huesat|..., ...参数}
-  filter  {filter:gaussianBlur|unsharpMask|..., target?:图层名(缺省=最近一个像素层), ...参数}
+  group   {name,opacity?,blend?,layers:[子图层]}   子层里可再放 group（组套组）
+  adjust  {adj:curves|levels|huesat|gradientMap|..., ...参数}
+  filter  {filter:gaussianBlur|mosaic|threshold|..., target?:图层名(缺省=最近一个像素层), ...参数}
   clip    {target?}      把最近一个图层设为下方图层的剪贴蒙版
   erase   {x1,y1,x2,y2,target?}   在目标层上硬擦除一个矩形（图层蒙版不可用时的替代）
 
@@ -62,11 +65,16 @@ FILTERS = {
     "desaturate": ("desaturate", []),
     "posterize": ("posterize", ["levels"]),
     "threshold": ("threshold", ["level"]),
+    "mosaic": ("__am_mosaic__", ["cellSize"]),   # DOM 无 applyMosaic，需走 Msc 事件
 }
 ADJUSTS = {"curves", "levels", "huesat", "bw", "photoFilter", "vibrance",
            "exposure", "colorBalance", "invert", "posterize", "selectiveColor",
-           "channelMixer", "colorLookup"}
+           "channelMixer", "colorLookup", "gradientMap"}
+# 注意：这里必须是 **class ID**，不是事件 ID。
+# 反例：写 "gradientMap"（事件ID 4302）会报「命令"建立:"当前不可用」；
+#       写 "gradientMapClass"（class ID）才建得出来。阈值同理，只是它的 class 也不可用。
 ADJ_KIND_STR = {
+    "gradientMap": "gradientMapClass",
     "curves": "curves", "levels": "levels", "huesat": "hueSaturation",
     "bw": "blackAndWhite", "photoFilter": "photoFilter", "vibrance": "vibrance",
     "exposure": "exposure", "colorBalance": "colorBalance", "invert": "invert",
@@ -185,9 +193,9 @@ PRELUDE = r'''#target photoshop
     function hex(h) { var c = new SolidColor(); c.rgb.hexValue = h; return c; }
     var step = 0, ok = 0, bad = 0;
     function T(name, fn) {
-        step++;
-        try { var r = fn(); ok++; L("PASS " + step + " " + name + (r != null ? "  => " + r : "")); }
-        catch (e) { bad++; L("FAIL " + step + " " + name + "  !! " + e.message); }
+        var myStep = ++step;   // 必须捕获，嵌套 T 执行期全局 step 已变，直接读会串号
+        try { var r = fn(); ok++; L("PASS " + myStep + " " + name + (r != null ? "  => " + r : "")); }
+        catch (e) { bad++; L("FAIL " + myStep + " " + name + "  !! " + e.message); }
     }
     function need(n) { var l = D.artLayers.getByName(n); return l; }
     function rect(x1, y1, x2, y2, color) {
@@ -324,16 +332,41 @@ EPILOGUE = r'''
 '''
 
 
-def emit_layer(L, depth=0):
-    """把一个图层对象翻译成 JSX 语句。"""
+def emit_layer(L, depth=0, stack=None):
+    """把一个图层对象翻译成 JSX 语句。
+
+    stack = 祖先组名列表（[] / None 表示文档根）。
+    组套组不能靠 move（对 LayerSet 恒报「非法参数」），正确做法是
+    **在父组内的锚点图层上原位 make layerSection**，新组会插在锚点前、即父组内部。
+
+    关键坑：DOM 的 getByName 只在**当前集合的直接成员**里找，不做递归。
+    所以第 3 层及更深必须用链式路径 A.layerSets.getByName("B")... 去定位，
+    否则 `D.artLayers.getByName("Outer__anchor")` 会报「没有这种元素」（实测已踩）。
+    """
+    stack = list(stack or [])
     t = L["type"]
     nm = L.get("name") or "%s_%d" % (t, depth)
     out = []
+    in_group = bool(stack)
+
+    def gref():
+        """最内层组的 JS 表达式。"""
+        e = "D"
+        for g in stack:
+            e += '.layerSets.getByName(%s)' % _s(g)
+        return e
+
+    def into_group(var):
+        if in_group:
+            return ['  %s.move(%s, ElementPlacement.INSIDE);' % (var, gref())]
+        return []
+
     if t == "rect":
         out.append('T(%s, function () {' % _s("rect " + nm))
         out.append('  var l = D.artLayers.add(); l.name = %s; D.activeLayer = l;' % _s(nm))
         out.append('  rect(%s, %s, %s, %s, %s);' % (_num(L["x1"]), _num(L["y1"]), _num(L["x2"]), _num(L["y2"]), _s(L["color"])))
-        out += ["  " + s.replace("l.", "l.") for s in _common(L)]
+        out += ["  " + x for x in _common(L)]
+        out += into_group("l")
         out.append('  lastPixel = l;')
         out.append('  return l.name + " op=" + l.opacity;')
         out.append('});')
@@ -364,7 +397,8 @@ def emit_layer(L, depth=0):
             out.append('  ti.warpStyle = WarpStyle.%s;' % WARP[L["warp"].lower()])
             out.append('  ti.warpBend = %s;' % _num(L.get("bend", 50)))
         out.append('  ti.position = [new UnitValue(%s, "px"), new UnitValue(%s, "px")];' % (_num(L["x"]), _num(L["y"])))
-        out += ["  " + s for s in _common(L)]
+        out += ["  " + x for x in _common(L)]
+        out += into_group("l")
         out.append('  return "font=" + ti.font + " size=" + ti.size;')
         out.append('});')
     elif t == "image":
@@ -385,24 +419,30 @@ def emit_layer(L, depth=0):
             out.append('  l.resize(s, s, AnchorPosition.TOPLEFT);')
         out.append('  var b2 = l.bounds;')
         out.append('  l.translate(%s - b2[0].as("px"), %s - b2[1].as("px"));' % (_num(L["x"]), _num(L["y"])))
-        out += ["  " + s for s in _common(L)]
+        out += ["  " + x for x in _common(L)]
+        out += into_group("l")
         out.append('  lastPixel = l;')
         out.append('  return "bounds=" + l.bounds[0].as("px") + "," + l.bounds[1].as("px");')
         out.append('});')
     elif t == "group":
         out.append('T(%s, function () {' % _s("group " + nm))
-        out.append('  var g = D.layerSets.add(); g.name = %s;' % _s(nm))
-        out.append('  var keep = D.activeLayer;')
+        if not in_group:
+            out.append('  var g = D.layerSets.add(); g.name = %s;' % _s(nm))
+        else:
+            out.append('  D.activeLayer = %s.artLayers.getByName(%s);' % (gref(), _s(stack[-1] + "__anchor")))
+            out.append('  var d = new ActionDescriptor();')
+            out.append('  var rc = new ActionReference(); rc.putClass(stringIDToTypeID("layerSection"));')
+            out.append('  d.putReference(stringIDToTypeID("null"), rc);')
+            out.append('  var rt = new ActionReference(); rt.putEnumerated(stringIDToTypeID("layer"), stringIDToTypeID("ordinal"), stringIDToTypeID("targetEnum"));')
+            out.append('  d.putReference(stringIDToTypeID("at"), rt);')
+            out.append('  executeAction(stringIDToTypeID("make"), d, DialogModes.NO);')
+            out.append('  var g = D.activeLayer; g.name = %s;' % _s(nm))
+        out.append('  var anchor = D.artLayers.add(); anchor.name = %s + "__anchor";' % _s(nm))
+        out.append('  anchor.move(g, ElementPlacement.INSIDE);')
         for child in L["layers"]:
-            body = emit_layer(child, depth + 1)
-            if child.get("type") == "group":
-                raise ValueError("不支持组套组：本机 move(group, INSIDE) 恒报「非法参数」，见 SKILL.md 坑位 6")
-            # 子层建在根上，再 move 进组
-            joined = "\n".join(body)
-            joined = joined.replace("  lastPixel = l;", "  l.move(g, ElementPlacement.INSIDE); lastPixel = l;")
-            joined = joined.replace("  lastPixel = l;\n", "  l.move(g, ElementPlacement.INSIDE); lastPixel = l;\n")
-            out.append(joined)
-        out += ["  " + s.replace("l.", "g.") for s in _common(L, var="g")]
+            out.append("\n".join(emit_layer(child, depth + 1, stack + [nm])))
+        out.append('  anchor.remove();')
+        out += ["  " + x for x in _common(L, var="g")]
         out.append('  return "children=" + g.layers.length;')
         out.append('});')
     elif t == "adjust":
@@ -418,7 +458,7 @@ def emit_layer(L, depth=0):
             out.append('  setLevels(%s, %s, %s, %s, %s);' % (_num(i0), _num(i1), _num(L.get("gamma", 1.0)), _num(o0), _num(o1)))
         elif adj == "huesat":
             out.append('  setHueSat(%s, %s, %s);' % (_num(L.get("hue", 0)), _num(L.get("sat", 0)), _num(L.get("light", 0))))
-        out += ["  " + s.replace("l.", "l.") for s in _common(L)]
+        out += ["  " + x for x in _common(L)]
         out.append('  return "kind=" + l.kind;')
         out.append('});')
     elif t == "filter":
@@ -427,17 +467,24 @@ def emit_layer(L, depth=0):
         tgt = L.get("target")
         out.append('T(%s, function () {' % _s("filter " + L["filter"]))
         if tgt:
-            out.append('  var t = D.artLayers.getByName(%s); D.activeLayer = t;' % _s(tgt))
+            out.append('  var t = D.layers.getByName(%s); D.activeLayer = t;' % _s(tgt))
         else:
             out.append('  if (!lastPixel) throw new Error("没有可作用的像素层"); D.activeLayer = lastPixel;')
-        out.append('  D.activeLayer.%s(%s);' % (fn, vals))
+        if fn == "__am_mosaic__":
+            out.append('  var d = new ActionDescriptor();')
+            out.append('  var r = new ActionReference(); r.putEnumerated(charIDToTypeID("Lyr "), charIDToTypeID("Ordn"), charIDToTypeID("Trgt"));')
+            out.append('  d.putReference(charIDToTypeID("null"), r);')
+            out.append('  d.putInteger(charIDToTypeID("ClSz"), %s);' % vals)
+            out.append('  executeAction(charIDToTypeID("Msc "), d, DialogModes.NO);')
+        else:
+            out.append('  D.activeLayer.%s(%s);' % (fn, vals))
         out.append('  return "applied";')
         out.append('});')
     elif t == "clip":
         tgt = L.get("target")
         out.append('T(%s, function () {' % _s("clip"))
         if tgt:
-            out.append('  var c = D.artLayers.getByName(%s); D.activeLayer = c;' % _s(tgt))
+            out.append('  var c = D.layers.getByName(%s); D.activeLayer = c;' % _s(tgt))
         else:
             out.append('  var c = D.activeLayer;')
         out.append('  c.grouped = true;')
@@ -447,7 +494,7 @@ def emit_layer(L, depth=0):
         tgt = L.get("target")
         out.append('T(%s, function () {' % _s("erase " + nm))
         if tgt:
-            out.append('  var e = D.artLayers.getByName(%s); D.activeLayer = e;' % _s(tgt))
+            out.append('  var e = D.layers.getByName(%s); D.activeLayer = e;' % _s(tgt))
         else:
             out.append('  if (!lastPixel) throw new Error("没有可擦除的像素层"); D.activeLayer = lastPixel;')
         out.append('  D.selection.select([[%s, %s], [%s, %s], [%s, %s], [%s, %s]]);'
@@ -514,7 +561,11 @@ def main():
         print("清单校验通过：layers=%d" % len(m["layers"]))
         return 0
 
-    out_dir = Path(a.out or m["out"]["dir"]).resolve()
+    # out.dir 同样按"清单文件所在目录"解析，整包搬走不变
+    od = Path(a.out or m["out"]["dir"])
+    if not od.is_absolute():
+        od = mpath.parent / od
+    out_dir = od.resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = a.stem or m["out"]["stem"]
     jsx = build_jsx(m, out_dir, stem)

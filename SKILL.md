@@ -1,6 +1,6 @@
 ---
 name: ps-jsx-poster-cutout
-description: 用 Photoshop 25.x + ExtendScript(JSX) 做全自动出图：一份 JSON 清单 → 分层 PSD/PNG/JPG/TIFF，支持图层组、剪贴蒙版、调整层（曲线/色阶/色相饱和度等 13 种）、滤镜（11 种）、文字（点/段落/竖排/变形）、图片置入、选区运算、智能对象；也覆盖本地抠图（选择主体）与人像海报。当用户要求"用 PS 做海报/卡片/证件照"、"把人物抠出来换背景"、"不打开 GUI 批量出图"、"PS 能不能脚本化"时使用。已实测清单式驱动 25 步全通过、产物 16 层可编辑、重开 PSD 图层名与不透明度保真。
+description: 用 Photoshop 25.x + ExtendScript(JSX) 做全自动出图：一份 JSON 清单 → 分层 PSD/PNG/JPG/TIFF，支持图层组与组套组（任意层嵌套）、剪贴蒙版、调整层（曲线/色阶/色相饱和度/渐变映射等 14 种）、滤镜（马赛克/高斯模糊/加噪等 12 种）、文字（点/段落/竖排/变形）、图片置入、选区运算、智能对象；也覆盖本地抠图（选择主体）与人像海报。当用户要求"用 PS 做海报/卡片/证件照"、"把人物抠出来换背景"、"不打开 GUI 批量出图"、"PS 能不能脚本化"时使用。已实测两份清单全通过（25 步/13 层；15 步/含三层嵌套组），重开 PSD 图层名、类型、不透明度与嵌套结构保真。
 agent_created: true
 ---
 
@@ -25,7 +25,7 @@ python "$SK/ps_build.py" manifest.json --dry-run   # 只生成 jsx
 python "$SK/ps_build.py" manifest.json             # 真跑 + 回读日志 + 核对产物
 ```
 
-清单最小样例见 `examples/manifest_basic.json`，全特性样例见 `examples/manifest_full.json`（16 图层、组、剪贴、模糊、擦除、图片置入全用上）。
+清单最小样例见 `examples/manifest_basic.json`，全特性样例见 `examples/manifest_full.json`（15 条顶层指令 → 13 图层，组、剪贴、模糊、擦除、图片置入全用上）；三项"复测翻案"的专用样例见 `examples/manifest_recovered.json`（渐变映射 + 马赛克 + **三层嵌套组**，15 步全通过）。
 
 ## 1. 能力矩阵（实测，非推测）
 
@@ -36,23 +36,27 @@ python "$SK/ps_build.py" manifest.json             # 真跑 + 回读日志 + 核
 | 普通图层 / 命名 / 不透明度 / 可见性 | ✅ | 不透明度有量化，写 30 读回 30.196 |
 | 混合模式（normal/multiply/screen/overlay/…） | ✅ | `blendMode = BlendMode.MULTIPLY` |
 | **图层组** | ✅ | `layerSets.add()`；**子层必须 `move(g, INSIDE)`** |
-| **组套组（嵌套）** | ❌ | 4 种写法全报「非法参数」，见坑位 6 |
+| **组套组（嵌套，任意深度）** | ✅ | `move(LayerSet→LayerSet)` 恒报「非法参数」，但**在父组内的锚点层上原位 `make layerSection`** 可成（实测 3 层结构 文档>Outer>Inner，回读嵌套保持）。坑位见 6、13 |
 | **剪贴蒙版** | ✅ | `clip.grouped = true`，像素证据：白方块内洋红 (255,0,255)，方块外保持底色 (26,26,26)，两版 MAD 5.10 |
-| **图层蒙版** | ❌ | 4 种 ActionManager 配方全报「程序错误」，见坑位 3 |
+| **图层蒙版** | ❌ | 7 种 ActionManager 配方全报「程序错误」，见坑位 3 |
 | 图层复合 layerComps | ✅ | 捕获的是**当前可见性**，不是任意指定 |
 | 智能对象 | ✅ | `newPlacedLayer`；`placedLayerEditContents` 能打开内部 .psb（打开数 1→2→1） |
 | 智能滤镜（非破坏模糊） | ✅ | 智能对象上 `applyGaussianBlur(8)` |
 | 填充层：渐变 / 图案 | ✅ | `make AdjL` + `type: gradientLayer / patternLayer` |
 | 填充层：纯色 | ⚠️ | 能建（`solidColorLayer`），但**改色 `setd` 失败**（参数 3），只能用默认色 |
 
-### 1.2 调整层（13 ✅ / 2 ❌）
+### 1.2 调整层（14 ✅ / 1 ❌）
 
-`make AdjL` + `using.adjustmentLayer.type.<stringID>`，全部实测建层成功：
+`make AdjL` + `using.adjustmentLayer.type.<ID>`，全部实测建层成功：
 
 ✅ `curves` `levels` `hueSaturation` `blackAndWhite` `photoFilter` `vibrance` `exposure`
-  `colorBalance` `invert` `posterize` `selectiveColor` `channelMixer` `colorLookup`
+  `colorBalance` `invert` `posterize` `selectiveColor` `channelMixer` `colorLookup` `gradientMap`
 
-❌ `gradientMap`（命令"建立:"当前不可用） · ❌ `threshold`（同上；像素层的 `layer.threshold()` 可用，MAD 109）
+> **`gradientMap` 必须写 class ID `gradientMapClass`（`GdMp`, 1197755760），不是事件 ID `gradientMap`（4302）。**
+> 写事件 ID 会报「命令"建立:"当前不可用」——这条曾被我误判成"本机不支持"，实际是 ID 用错。
+> 量化证据：Sky 原色 `C8D8FF` 的 B−R=55，套渐变映射后 B−R=**0.00**、均值恰为 `219/219/219`（完全去色 neutralizing），见 `docs/VERIFY.md` §2。
+
+❌ `threshold`（`thresholdClass` / `Thsh` / `thresholdLayer` / 先建 curves 再 setd 改 type —— 4 条路全「当前不可用」；**像素层 `layer.threshold()` 可用，MAD 93.88**）
 
 **参数可写，且真的改像素**（与基准图逐像素平均绝对差）：
 
@@ -64,7 +68,7 @@ python "$SK/ps_build.py" manifest.json             # 真跑 + 回读日志 + 核
 
 > 只建层不设参 = 默认值 = 无变化。要"看起来调过色"，必须走上面的 `setd` 分支，`ps_build.py` 已封装成 `{"type":"adjust","adj":"curves","points":[[0,12],[128,140],[255,248]]}`。
 
-### 1.3 滤镜（11 ✅）
+### 1.3 滤镜（12 ✅）
 
 `layer.applyXxx()` 直接可用，MAD 全部非零：
 
@@ -79,8 +83,19 @@ python "$SK/ps_build.py" manifest.json             # 真跑 + 回读日志 + 核
 | unsharpMask | amount, radius, threshold | 7.87 |
 | sharpenMore | — | 7.50 |
 | threshold | level | 109.09 |
+| **mosaic** | cellSize | 见下（DOM 无此方法，走 ActionManager） |
 
-❌ `mosaic`：DOM 里**没有** `applyMosaic` 方法（不是权限问题，是方法不存在）。
+**马赛克要绕道**：DOM 里**没有** `applyMosaic`（「不是函数」）。正解是 ActionManager 事件 `Msc ` + 整数键 `ClSz`：
+
+```javascript
+var d = new ActionDescriptor();
+var r = new ActionReference(); r.putEnumerated(charIDToTypeID("Lyr "), charIDToTypeID("Ordr"), charIDToTypeID("Trgt"));
+d.putReference(charIDToTypeID("null"), r);
+d.putInteger(charIDToTypeID("ClSz"), 24);          // 单元格边长，是整数不是 UnitDouble
+executeAction(charIDToTypeID("Msc "), d, DialogModes.NO);
+```
+
+`ps_build.py` 已封装成 `{"type":"filter","filter":"mosaic","cellSize":24}`。量化证据：导出图水平/垂直相邻像素完全相同率 **95.9% / 96.0%**，跳变列间距严格 **24,24,24,…**（10 个连续），见 `docs/VERIFY.md` §2。
 
 ### 1.4 文字
 
@@ -105,13 +120,13 @@ python "$SK/ps_build.py" manifest.json             # 真跑 + 回读日志 + 核
 | 羽化 feather | ✅ | 边缘渐变可量 |
 | 收缩 contract | ✅ | 100px 选区 -10 → 80px |
 | 反选 invert | ✅ | |
-| **扩展 expand** | ❌ | `selection.expand()` 报「没有这种元素」 |
+| **扩展 expand** | ⚠️ | `selection.expand()` 报「没有这种元素」；AM `Expn` 能跑但**不管传 8/32/80 都只扩 1px**（100→99/201）。**唯一可靠做法：读 `bounds` 自己算再 `select()`**（实测 92,92,208,208 一次到位） |
 | resizeCanvas / resizeImage / crop | ✅ | 600×400 → 300×200 → crop 200×150 |
 | 导出 PNG / JPG / TIFF / PSD / PDF | ✅ | `saveAs` + 对应 Options；PSD `layers=true` 保层 |
 | 存为 Web（PNG24 / JPG） | ✅ | `exportDocument(f, ExportType.SAVEFORWEB, o)` |
 | **WebP** | ❌ | 无 `WebPSaveOptions` 构造器 |
 
-**PSD 往返保真**（本例 16 层）：`saveAs(psd)` → `close` → `app.open` 回读，图层数、名称、类型（TEXT/NORMAL/LayerSet）、不透明度、文本内容全部一致。
+**PSD 往返保真**（本例 13 层）：`saveAs(psd)` → `close` → `app.open` 回读，顶层 7 条、`Outer>Inner>2 子层` 三层嵌套、`LayerKind.GRADIENTMAP`、图层名/类型/不透明度/可见性全部一致。
 
 ## 2. 执行通道
 
@@ -126,7 +141,7 @@ app.DoJavaScriptFile(r'绝对路径\script.jsx')   # 首选，免疫字符串转
 - `DoJavaScript(code)` 只有单参数签名可用，含引号/换行易报「未终止的字符串常数」→ **一律走 .jsx 文件**。
 - 日志由 JSX 写文件、Python 读回；JSX 返回值不可靠。
 
-## 3. 坑位（12 条，全部踩过）
+## 3. 坑位（13 条，全部踩过）
 
 **1. COM 的 `Documents.Count` 不可靠** → 判断"有没有文档"只信 JSX 的 `app.documents.length`。
 
@@ -143,8 +158,22 @@ app.DoJavaScriptFile(r'绝对路径\script.jsx')   # 首选，免疫字符串转
 **5. 覆盖用户文档 = 数据丢失级错误。**
 早期模板写 `while (app.documents.length > 0) app.documents[0].close(...)`，用户开着未保存 PSD 时跑一次就丢光。正确做法：只 `app.documents.add()` 自己那一份，干完只 `doc.close()` 自己那份，并打日志核对 `app.documents.length` 回到 `preexisting`。
 
-**6. 组套组做不到。**
-`g2.move(g1, ElementPlacement.INSIDE / PLACEATBEGINNING)` 对 **LayerSet→LayerSet** 恒报「非法参数」（对 ArtLayer→LayerSet 却正常）。`layerSets.add()` 也不会因为激活组而进组。可用替代：**单层组 + 子层 move 进组**；需要视觉分组时用命名前缀（`Rows_R1`）。
+**6. 组套组：`move` 不行，但在锚点上 `make layerSection` 可以。**
+`g2.move(g1, ElementPlacement.INSIDE / PLACEATBEGINNING)` 对 **LayerSet→LayerSet** 恒报「非法参数」（对 ArtLayer→LayerSet 却正常）；`g2.duplicate(g1)` 报「您不能把一个图层组复制到另一个图层组中」。**可行的路只有一条**：
+
+```javascript
+// 前提：父组 G 里已经有一个普通图层当"锚点"（名字自己起，如 G__anchor）
+D.activeLayer = <父组>.artLayers.getByName("G__anchor");
+var d = new ActionDescriptor();
+var rc = new ActionReference(); rc.putClass(stringIDToTypeID("layerSection"));
+d.putReference(stringIDToTypeID("null"), rc);
+var rt = new ActionReference(); rt.putEnumerated(stringIDToTypeID("layer"), stringIDToTypeID("ordinal"), stringIDToTypeID("targetEnum"));
+d.putReference(stringIDToTypeID("at"), rt);          // at = 锚点 → 新组插在锚点位置，即父组内部
+executeAction(stringIDToTypeID("make"), d, DialogModes.NO);
+var g = D.activeLayer; g.name = "子组";
+```
+
+`ps_build.py` 的 `group` 类型就是这么做的：**进组前先塞 `名字+__anchor` 普通层，建完子层后 `anchor.remove()`**，所以产物里看不到锚点。实测 `Outer>Inner` 三层结构，回读 `Outer.children=2`、`Inner.children=2`。
 
 **7. 矢量形状图层没有稳定配方。**
 `make contentLayer` + `type: solidColorLayer` 报「命令当前不可用」；且失败后残留工作路径会让**后续 `selection.fill` 一起报「命令填充当前不可用」**（状态污染）。老实做：选区 + 填充。
@@ -166,6 +195,15 @@ app.DoJavaScriptFile(r'绝对路径\script.jsx')   # 首选，免疫字符串转
 **12. 别在子线程里直接调 COM。**
 线程内必须先 `pythoncom.CoInitialize()`，否则报「尚未调用 CoInitialize」——这个错误看起来像"PS 没装好"，其实是漏初始化。
 
+**13. `getByName` 只找直接成员，不做递归。**
+`D.artLayers.getByName("Outer__anchor")` 对**组内**的图层报「没有这种元素」；`D.layerSets.getByName("Inner")` 同样找不到嵌套组。三层以上必须写链式路径：
+
+```javascript
+D.layerSets.getByName("Outer").layerSets.getByName("Inner").artLayers.getByName("Inner__anchor")
+```
+
+`ps_build.py` 的 `emit_layer` 用 `stack` 列表逐层拼出这条链（`gref()`），这是嵌套组第一版唯一的翻车点。顺带一个纪律：**清单里图层名必须全局唯一**，否则链式定位会命中错的同名层。
+
 ## 4. 清单字段速查
 
 ```jsonc
@@ -180,10 +218,15 @@ app.DoJavaScriptFile(r'绝对路径\script.jsx')   # 首选，免疫字符串转
                 "warp":"arc","bend":50,"opacity":80,"blend":"screen"},
     {"type":"image","path":"a.png","x":84,"y":470,"w":420,"h":300,"fit":"cover"},
     {"type":"group","name":"Rows","opacity":100,"layers":[ /* 子层 */ ]},
+    {"type":"group","name":"Outer","layers":[            /* 组套组：直接嵌 group */
+        {"type":"group","name":"Inner","layers":[ /* 再嵌 */ ]}
+    ]},
     {"type":"adjust","adj":"curves","points":[[0,12],[128,140],[255,248]]},
     {"type":"adjust","adj":"levels","in":[40,200],"gamma":1.0,"out":[0,255]},
     {"type":"adjust","adj":"huesat","hue":0,"sat":60,"light":0},
+    {"type":"adjust","adj":"gradientMap"},
     {"type":"filter","filter":"gaussianBlur","radius":24,"target":"PanelAccent"},
+    {"type":"filter","filter":"mosaic","cellSize":24,"target":"Tile"},
     {"type":"clip","target":"ClipTop"},
     {"type":"erase","x1":700,"y1":1170,"x2":996,"y2":1250,"target":"Bar"}
   ]
@@ -193,6 +236,7 @@ app.DoJavaScriptFile(r'绝对路径\script.jsx')   # 首选，免疫字符串转
 - `text.y` 是**基线**，不是顶边。
 - `filter` 不写 `target` 时作用于"最近一个像素层"。
 - `blend` 支持 normal/multiply/screen/overlay/softlight/hardlight/darken/lighten/difference/lineardodge/color/luminosity。
+- `out.dir` 与 `image.path` 都**按清单文件所在目录**解析，整包目录搬走不用改。
 
 ## 5. 抠图（本地，不依赖云端）
 
@@ -218,5 +262,5 @@ executeAction(stringIDToTypeID("defringe"), {Wth: 1}, DialogModes.NO);
 - `scripts/ps_build.py` — 清单驱动器（主力）
 - `scripts/ps.py` — 连接/执行/图层树/卡片模板
 - `scripts/*.jsx` — do_cutout（抠图）、curves_tone（分通道曲线）、make_poster（旧模板）、list_layers、probe_*
-- `examples/manifest_basic.json` / `manifest_full.json`
+- `examples/manifest_basic.json` / `manifest_full.json` / `manifest_recovered.json`
 - `docs/VERIFY.md` — 每条结论的实测记录与失败原文
