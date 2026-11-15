@@ -3,7 +3,7 @@
   "template": "assets/tpl_cert.psd",
   "out": {"dir": "_out/fill", "stem": "cert_2026", "formats": ["png", "psd"]},
   "text": {
-    "Title": "2026 年度优秀员工",
+    "Title": "年度优秀员工",
     "Price": "奖金 ¥12,000"
   },
   "images": {

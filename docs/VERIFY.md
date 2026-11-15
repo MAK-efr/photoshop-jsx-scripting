@@ -406,9 +406,13 @@ PASS 10 variant 9x16   => ...variants_9x16.png   1080x1920
 
 模板 `tpl_cert.psd` 由 `p14_mktpl.jsx` 造出（BG + Title/Price 两个文字层 + Photo 智能对象，4 层）。
 
+> 第一版版式有遮挡：Title 72pt 从 x=60 起排到约 500px，智能对象却在 x=460 起，且替换图本身偏暗，
+> 出图看像"标题被截断 + 图片没换"。这不是脚本错，是样例设计没留够位置。
+> 改成 Title 60pt / 智能对象放在 (480,180) 360×300 后重做，下面所有数据都来自新版。
+
 ```
 PASS 1 open template  => tpl_cert.psd 900x600 layers=4
-PASS 2 text Title  => contents=2026 年度优秀员工
+PASS 2 text Title  => contents=年度优秀员工
 PASS 3 text Price  => contents=奖金 ¥12,000
 PASS 4 image Photo => replaced Photo kind=LayerKind.SMARTOBJECT
 PASS 5 visible Price => visible=true
@@ -419,16 +423,15 @@ SUMMARY pass=7 fail=0 layers=4 size=900x600
 **模板没被改写**：
 
 ```
-跑前 dc22eabc6ba9060301681dd1251c0991 *tpl_cert.psd
-跑后 dc22eabc6ba9060301681dd1251c0991 *tpl_cert.psd
+跑前 8d0c894b14c86fc0cc28cb2402cdc2c3 *tpl_cert.psd
+跑后 8d0c894b14c86fc0cc28cb2402cdc2c3 *tpl_cert.psd
 ```
 
-换图生效（两份回填只差文案和图片）：
+换图生效（A/B 两份回填只差文案和图片）：
 
 ```
-A vs B 尺寸 (600, 900, 3) (600, 900, 3)
-A vs B MAD = 11.498
-图区 MAD   = 19.698
+A vs B MAD = 22.816
+图区 MAD   = 92.994      ← 只取智能对象所在区域 (480,180)-(840,480)
 ```
 
 负向用例（把图替换到普通像素层上）必须明确报错而不是静默成功：

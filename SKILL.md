@@ -426,9 +426,9 @@ python ps_batch.py examples/batch_template.json --rows examples/batch_rows.csv
 - 按**图层名**定位，`getByName` 不递归 → 脚本自带 `findL()` 深度优先。
 - 换图只能作用于**智能对象**（`placedLayerReplaceContents`）；普通像素层会直接报错并告诉你"右键→转换为智能对象"，不会静默失败。实测负向用例原文：`BG 不是智能对象（kind=LayerKind.NORMAL）`。
 - 目标层被隐藏或被图层筛选器挡住时选不中（报 `-25920`），所以替换前先 `visible = true`。
-- **模板文件一个字节都不改**：只 `saveAs` 到新名字，关文档用 `DONOTSAVECHANGES`。实测模板 MD5 跑前跑后都是 `dc22eabc…`。
+- **模板文件一个字节都不改**：只 `saveAs` 到新名字，关文档用 `DONOTSAVECHANGES`。实测模板 MD5 跑前跑后都是 `8d0c894b…`。
 
-实测：回填 7 步 / 5 步全 PASS；两份回填成品图区 MAD **19.70**，证明换图生效。
+实测：回填 7 步 / 5 步全 PASS；两份回填成品整图 MAD **22.82**、图区 MAD **92.99**，证明换图生效。
 
 ## 8. 文件清单
 
