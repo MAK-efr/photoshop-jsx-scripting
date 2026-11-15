@@ -1,0 +1,62 @@
+{
+  "out": {
+    "dir": "./_out",
+    "stem": "recovered2",
+    "formats": ["psd", "png", "webp"]
+  },
+  "doc": {
+    "w": 900,
+    "h": 600,
+    "dpi": 72,
+    "bg": "101014",
+    "name": "PS-Recovered2"
+  },
+  "layers": [
+    {
+      "type": "shape",
+      "name": "ShapeRect",
+      "shape": "rectangle",
+      "x1": 40,
+      "y1": 40,
+      "x2": 400,
+      "y2": 260,
+      "color": "C8892F"
+    },
+    {
+      "type": "shape",
+      "name": "ShapeRing",
+      "shape": "ellipse",
+      "x1": 460,
+      "y1": 40,
+      "x2": 860,
+      "y2": 260,
+      "stroke": { "w": 10, "color": "2F7D6E" }
+    },
+    {
+      "type": "rect",
+      "name": "Fade",
+      "x1": 40,
+      "y1": 300,
+      "x2": 400,
+      "y2": 460,
+      "color": "3B82F6"
+    },
+    {
+      "type": "mask",
+      "name": "FadeMask",
+      "mode": "revealSelection",
+      "target": "Fade",
+      "sel": [120, 340, 320, 420]
+    },
+    {
+      "type": "text",
+      "name": "Note",
+      "text": "图层蒙版 / 矢量形状层 / WebP —— 复测恢复的三项",
+      "font": "NotoSansSC-Medium",
+      "size": 30,
+      "color": "F2EEE7",
+      "x": 40,
+      "y": 520
+    }
+  ]
+}

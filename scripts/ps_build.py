@@ -14,7 +14,8 @@
 
 清单结构
 {
-  "out":  {"dir": "相对清单文件或绝对路径", "stem": "产物名", "formats": ["psd","png","jpg","tif"]},
+  "out":  {"dir": "相对清单文件或绝对路径", "stem": "产物名",
+           "formats": ["psd","png","jpg","tif","pdf","webp"]},
   "doc":  {"w": 1080, "h": 1350, "dpi": 72, "bg": "14161A", "name": "PS-Build"},
   "layers": [ 自底向上排列的图层对象 ]
 }
@@ -28,7 +29,10 @@
   adjust  {adj:curves|levels|huesat|gradientMap|..., ...参数}
   filter  {filter:gaussianBlur|mosaic|threshold|..., target?:图层名(缺省=最近一个像素层), ...参数}
   clip    {target?}      把最近一个图层设为下方图层的剪贴蒙版
-  erase   {x1,y1,x2,y2,target?}   在目标层上硬擦除一个矩形（图层蒙版不可用时的替代）
+  erase   {x1,y1,x2,y2,target?}   在目标层上硬擦除一个矩形
+  mask    {mode:revealAll|hideAll|revealSelection|hideSelection, target?, sel?:[x1,y1,x2,y2]}
+                         给目标层加真·图层蒙版（PS 25 实测可用；坑：charID 必须 4 字符）
+  shape   {shape:rectangle|ellipse, x1,y1,x2,y2, color?, stroke?:{w,color}}   矢量形状层
 
 用法
   python ps_build.py manifest.json
@@ -99,7 +103,7 @@ def validate(m):
         errs.append("缺少 out.stem")
     fmts = out.get("formats") or ["png", "psd"]
     for f in fmts:
-        if f.lower() not in ("psd", "png", "jpg", "tif", "pdf"):
+        if f.lower() not in ("psd", "png", "jpg", "tif", "pdf", "webp"):
             errs.append("不支持的导出格式: %s" % f)
     if not isinstance(m.get("layers"), list) or not m["layers"]:
         errs.append("layers 必须是非空数组")
@@ -149,6 +153,21 @@ def validate(m):
             elif t == "filter":
                 if L.get("filter") not in FILTERS:
                     errs.append("%s 未知滤镜 %s" % (p, L.get("filter")))
+            elif t == "shape":
+                for k in ("x1", "y1", "x2", "y2"):
+                    if k not in L:
+                        errs.append("%s 缺少 %s" % (p, k))
+                if L.get("shape", "rectangle") not in ("rectangle", "ellipse"):
+                    errs.append("%s shape 只能是 rectangle/ellipse" % p)
+                if L.get("stroke") is not None and not isinstance(L["stroke"], dict):
+                    errs.append("%s stroke 必须是对象 {w,color}" % p)
+            elif t == "mask":
+                if L.get("mode", "revealAll") not in ("revealAll", "hideAll",
+                                                      "revealSelection", "hideSelection"):
+                    errs.append("%s 未知蒙版模式 %s" % (p, L.get("mode")))
+                sel = L.get("sel")
+                if sel is not None and (not isinstance(sel, list) or len(sel) != 4):
+                    errs.append("%s sel 必须是 [x1,y1,x2,y2]" % p)
             elif t in ("clip", "erase"):
                 pass
             else:
@@ -202,6 +221,69 @@ PRELUDE = r'''#target photoshop
         D.selection.select([[x1, y1], [x2, y1], [x2, y2], [x1, y2]]);
         D.selection.fill(hex(color));
         D.selection.deselect();
+    }
+    function hexRGB(h) {
+        var c = new SolidColor(); c.rgb.hexValue = h;
+        return [c.rgb.red, c.rgb.green, c.rgb.blue];
+    }
+    // 加图层蒙版。坑①：charIDToTypeID 只吃 4 字符，"Nw "/"At "/"Mk " 会抛「非法参数」；
+    // 坑②：At 引用的枚举第三值是 'Msk '（= stringID "mask"），不是 stringID "maskChannel"。
+    function addMask(enumStr) {
+        var d = new ActionDescriptor();
+        d.putClass(charIDToTypeID("Nw  "), charIDToTypeID("Chnl"));
+        var r = new ActionReference();
+        r.putEnumerated(charIDToTypeID("Chnl"), charIDToTypeID("Chnl"), charIDToTypeID("Msk "));
+        d.putReference(charIDToTypeID("At  "), r);
+        d.putEnumerated(charIDToTypeID("Usng"), charIDToTypeID("UsrM"), charIDToTypeID(enumStr));
+        executeAction(charIDToTypeID("Mk  "), d, DialogModes.NO);
+    }
+    // 建矢量形状层（contentLayer + solidColorLayer + rectangle/ellipse + strokeStyle）
+    function mkShape(kindStr, x1, y1, x2, y2, color, stroke) {
+        var rgb = hexRGB(color);
+        var d = new ActionDescriptor();
+        var r = new ActionReference();
+        r.putClass(stringIDToTypeID("contentLayer"));
+        d.putReference(charIDToTypeID("null"), r);
+
+        var d1 = new ActionDescriptor();
+        var cd = new ActionDescriptor();
+        cd.putDouble(charIDToTypeID("Rd  "), rgb[0]);
+        cd.putDouble(charIDToTypeID("Grn "), rgb[1]);
+        cd.putDouble(charIDToTypeID("Bl  "), rgb[2]);
+        var td = new ActionDescriptor();
+        td.putObject(charIDToTypeID("Clr "), charIDToTypeID("RGBC"), cd);
+        d1.putObject(stringIDToTypeID("type"), stringIDToTypeID("solidColorLayer"), td);
+
+        var sh = new ActionDescriptor();
+        sh.putUnitDouble(stringIDToTypeID("top"), stringIDToTypeID("pixelsUnit"), y1);
+        sh.putUnitDouble(stringIDToTypeID("left"), stringIDToTypeID("pixelsUnit"), x1);
+        sh.putUnitDouble(stringIDToTypeID("bottom"), stringIDToTypeID("pixelsUnit"), y2);
+        sh.putUnitDouble(stringIDToTypeID("right"), stringIDToTypeID("pixelsUnit"), x2);
+        d1.putObject(stringIDToTypeID("shape"), stringIDToTypeID(kindStr), sh);
+
+        var st = new ActionDescriptor();
+        if (stroke) {
+            st.putBoolean(stringIDToTypeID("strokeEnabled"), true);
+            st.putUnitDouble(stringIDToTypeID("strokeStyleLineWidth"),
+                             stringIDToTypeID("pixelsUnit"), stroke.w);
+            var sc = new ActionDescriptor();
+            var scCol = hexRGB(stroke.color || "000000");
+            var scc = new ActionDescriptor();
+            scc.putDouble(charIDToTypeID("Rd  "), scCol[0]);
+            scc.putDouble(charIDToTypeID("Grn "), scCol[1]);
+            scc.putDouble(charIDToTypeID("Bl  "), scCol[2]);
+            sc.putObject(charIDToTypeID("Clr "), charIDToTypeID("RGBC"), scc);
+            st.putObject(stringIDToTypeID("strokeStyleContent"), stringIDToTypeID("solidColorLayer"), sc);
+            st.putBoolean(stringIDToTypeID("fillEnabled"), false);
+        } else {
+            st.putBoolean(stringIDToTypeID("strokeEnabled"), false);
+            st.putBoolean(stringIDToTypeID("fillEnabled"), true);
+        }
+        d1.putObject(stringIDToTypeID("strokeStyle"), stringIDToTypeID("strokeStyle"), st);
+
+        d.putObject(stringIDToTypeID("using"), stringIDToTypeID("contentLayer"), d1);
+        executeAction(charIDToTypeID("Mk  "), d, DialogModes.NO);
+        return D.activeLayer;
     }
     function setCurves(pts) {
         var d = new ActionDescriptor();
@@ -314,6 +396,22 @@ EPILOGUE = r'''
                     D.saveAs(file, t, true, Extension.LOWERCASE);
                 } else if (fmt === "pdf") {
                     D.saveAs(file, new PDFSaveOptions(), true, Extension.LOWERCASE);
+                } else if (fmt === "webp") {
+                    // 实测：SaveDocumentType.WEBP 不存在、WebPSaveOptions 无构造器，
+                    // 唯一可用的路是 ActionManager save + as=WebPFormat（PS 2022+ 原生支持）
+                    var wd = new ActionDescriptor();
+                    var wd2 = new ActionDescriptor();
+                    wd2.putEnumerated(stringIDToTypeID("compression"), stringIDToTypeID("WebPCompression"),
+                                      stringIDToTypeID("compressionLossy"));
+                    wd2.putInteger(stringIDToTypeID("quality"), 82);
+                    wd2.putBoolean(stringIDToTypeID("includeXMPData"), false);
+                    wd2.putBoolean(stringIDToTypeID("includeEXIFData"), false);
+                    wd2.putBoolean(stringIDToTypeID("includePsExtras"), false);
+                    wd.putObject(stringIDToTypeID("as"), stringIDToTypeID("WebPFormat"), wd2);
+                    wd.putPath(stringIDToTypeID("in"), file);
+                    wd.putBoolean(stringIDToTypeID("copy"), true);
+                    wd.putBoolean(stringIDToTypeID("lowerCase"), true);
+                    executeAction(stringIDToTypeID("save"), wd, DialogModes.NO);
                 }
                 return file.fsName;
             });
@@ -502,6 +600,41 @@ def emit_layer(L, depth=0, stack=None):
                       _num(L["x2"]), _num(L["y2"]), _num(L["x1"]), _num(L["y2"])))
         out.append('  D.selection.clear(); D.selection.deselect();')
         out.append('  return "erased";')
+        out.append('});')
+    elif t == "shape":
+        kind = L.get("shape", "rectangle")
+        out.append('T(%s, function () {' % _s("shape " + kind + " " + nm))
+        stroke = L.get("stroke")
+        stroke_js = ('{w: %s, color: %s}' % (_num(stroke.get("w", 2)),
+                                            _s(stroke.get("color", "000000")))) if stroke else 'null'
+        out.append('  var s = mkShape(%s, %s, %s, %s, %s, %s, %s);' % (
+            _s(kind), _num(L["x1"]), _num(L["y1"]), _num(L["x2"]), _num(L["y2"]),
+            _s(L.get("color", "FFFFFF")), stroke_js))
+        out.append('  s.name = %s;' % _s(nm))
+        out += ["  " + x for x in _common(L, var="s")]
+        out += into_group("s")
+        out.append('  lastPixel = s;')
+        out.append('  return "kind=" + s.kind;')
+        out.append('});')
+    elif t == "mask":
+        mode = L.get("mode", "revealAll")
+        enum_js = {"revealAll": "RvlA", "hideAll": "HdAl",
+                   "revealSelection": "RvlS", "hideSelection": "HdSl"}[mode]
+        tgt = L.get("target")
+        sel = L.get("sel")
+        out.append('T(%s, function () {' % _s("mask " + mode + " " + nm))
+        if tgt:
+            out.append('  D.activeLayer = D.layers.getByName(%s);' % _s(tgt))
+        else:
+            out.append('  if (!lastPixel) throw new Error("没有可加蒙版的图层"); D.activeLayer = lastPixel;')
+        if sel:
+            out.append('  D.selection.select([[%s, %s], [%s, %s], [%s, %s], [%s, %s]]);'
+                       % (_num(sel[0]), _num(sel[1]), _num(sel[2]), _num(sel[1]),
+                          _num(sel[2]), _num(sel[3]), _num(sel[0]), _num(sel[3])))
+        out.append('  addMask(%s);' % _s(enum_js))
+        if sel:
+            out.append('  D.selection.deselect();')
+        out.append('  return "mask=%s on " + D.activeLayer.name;' % mode)
         out.append('});')
     else:
         raise ValueError("未知 type: %s" % t)

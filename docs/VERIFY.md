@@ -3,7 +3,7 @@
 环境：Photoshop **25.0.0** · Win11 26200 · i7-12700H / 16 GB / Iris Xe · 2026-11-15
 方法：每条结论都跑一次 JSX，把结果写日志；"有没有效果"用导出 PNG 与基准图算**逐像素平均绝对差（MAD）**，不靠肉眼。
 
-> 本文第 8 节记录了一次**复测翻案**：早期 4 条 ❌ 里有 3 条是**误判**（用错 ID / 走错 API），不是本机不支持。判"不可用"之前必须把"同一能力的全部表达方式"列完。
+> 本文第 8、9 节记录了**两轮复测翻案**：先后判成 ❌ 的 7 项里有 **6 项是误判**（用错 ID / 走错 API / 少给一层描述符），只有阈值调整层确证不可用。判"不可用"之前必须把"同一能力的全部表达方式"列完，并且**要有一个能过的对照组**。
 
 ## 1. 图层体系
 
@@ -12,7 +12,7 @@
 | 组内新增图层不自动进组 | 确认 | 激活组后 `artLayers.add()`，`group.layers.length` 仍为 **0**；`move(g, INSIDE)` 后变 **1** |
 | 组套组 | **可用（有且仅有一条路）** | `move(LayerSet→LayerSet)` 四种写法全「非法参数」；`duplicate` 报「您不能把一个图层组复制到另一个图层组中」；**在父组内锚点层上 `make layerSection`（`at = targetEnum`）成功**：`P1.layers=2`、`P1>P1_inner>p1_child` 三层回读保真 |
 | 剪贴蒙版 | 可用 | 导两版 PNG：白方块内 `(255,0,255)`、方块外 `(26,26,26)`，两版整体 MAD **5.10** |
-| 图层蒙版 | **不可用** | 见第 4 节，7 种配方全部「程序错误」 |
+| 图层蒙版 | **可用** | `Mk`+`Nw=Chnl`+`At=Chnl/Chnl/**Msk**`+`Usng=UsrM/RvlA|HdAl|RvlS|HdSl`；三种模式全过，像素证据见第 9 节 |
 | 图层复合 | 可用 | 先隐藏再 `layerComps.add` → 恢复可见 → `apply`：`apply(off)->visible=false`、`apply(on)->visible=true` |
 | 智能对象 | 可用 | `newPlacedLayer` → `placedLayerEditContents` 打开内部 `SO.psb`（文档数 1→2→1） |
 | PSD 往返 | 保真 | 13 层：顶层 7 条、`Outer>Inner>2 子层`、`LayerKind.GRADIENTMAP`、名称/类型/不透明度/可见性逐一相同 |
@@ -21,7 +21,7 @@
 
 建层（`make AdjL` + `using.adjustmentLayer.type.<ID>`）：
 **14 个成功**：curves / levels / hueSaturation / blackAndWhite / photoFilter / vibrance / exposure / colorBalance / invert / posterize / selectiveColor / channelMixer / colorLookup / **gradientMap**
-**1 个失败**：`threshold` → 四种写法均「命令"建立:"当前不可用」。
+**1 个失败**：`threshold` → 10 种写法（4 类 ID × putObject/putClass × 空参/Lvl/presetKind/Adjs）均「命令"建立:"当前不可用」，且同构的 curves/posterize/invert 全过（对照组），见第 9 节。
 
 ### 2.1 渐变映射为什么"看起来不支持"
 
@@ -90,25 +90,24 @@ f_threshold     MAD= 109.093  EFFECT
 - 变形：`WarpStyle.ARC` + `warpBend=50` 生效（MAD 8.67）。
 - **行距**：直接赋值报「文本设置为自动行距，并且没有特殊的行距值」；改为先 `ti.useAutoLeading = false` 正常。
 
-## 4. 为什么判定"图层蒙版不可用"
+## 4. 图层蒙版：当时为什么误判
 
-失败原文（同一句）：
+第一轮把它判成"不可用"，失败原文是：
+
 ```
 发生了常规 Photoshop 错误。该功能可能无法在这个版本的 Photoshop 中使用。
 - 不能完成命令，因为程序错误。
 ```
-已排除的变量：
-1. `Mk Chnl` + `Nw` + `At=maskChannel` + `Usng=userMask/revealAll`（charID 版）
-2. 同上改用 `stringIDToTypeID`（`make/channel/maskChannel/userMask/revealAll`）
-3. 去掉 `At` 引用
-4. 先建选区再用 `revealSelection`
-5. `At` 引用改为指向目标图层 + 通道
-6. `quickMaskMode = false`
-7. `displayDialogs = ALL`（结果更糟：PS 弹内部错误框、无人可点，`DoJavaScriptFile` 永久阻塞，4 分钟后只能 `taskkill`）
 
-反证：图层对象上只有 `layerMaskFeather` / `layerMaskDensity` 这类**修改**属性，DOM 里没有任何"添加蒙版"的方法。
-替代方案（都已验）：剪贴蒙版、选区 + `selection.clear()` 硬擦除、组不透明度、选区羽化半透明。
+复盘后是两个叠加错误，**都不是 Photoshop 的限制**：
 
+1. `At` 引用的第三个枚举值写成了 `stringIDToTypeID("maskChannel")`（4414，那是**类 ID**），
+   正确写法是 `charIDToTypeID("Msk ")`（= stringID `"mask"`）。
+2. 同一段代码里 `"Nw "`/`"At "`/`"Mk "` 都只有 3 个字符，`charIDToTypeID` 直接抛「非法参数」——
+   这层异常被外层 try/catch 一起吞掉，日志里只剩最后一层报错，看起来像"命令不支持"。
+
+正确配方与像素证据见第 9.2 节。**教训：`At` 之后跟着的枚举三元组 `(key, enumType, enumValue)` 里，
+第三个必须是枚举值 charID，不能塞类 stringID。**
 ## 5. 面板 / 导出
 
 | 格式 | 结果 | 备注 |
@@ -119,7 +118,7 @@ f_threshold     MAD= 109.093  EFFECT
 | PSD | ✅ | `layers=true`，13 层 2.1 MB |
 | PDF | ✅ | |
 | SaveForWeb PNG24 / JPG | ✅ | `exportDocument(f, ExportType.SAVEFORWEB, o)` 真写出文件 |
-| WebP | ❌ | `SaveDocumentType.WEBP` 枚举直接报错、无 `WebPSaveOptions` 构造器、AM `save` + `As=WebP` 报「存储参数当前是无效的」——三条路都堵死 |
+| **WebP** | ✅ | `SaveDocumentType.WEBP` 与 `WebPSaveOptions` 都不存在（这两条路确实堵死），但 **AM `save` + `as=WebPFormat{compression,quality,...}` 可用**（PS 2022+ 原生）。实测 900×600 → 14,406 B，RIFF/WEBP 头，PIL 解码正常 |
 
 ## 6. 选区 / 画布
 
@@ -191,16 +190,129 @@ closed
 
 嵌套结构、调整层类型、可见性、不透明度全部原样保留。
 
-## 8. 复测翻案记录（4 条 ❌ → 3 条是误判）
+## 8. 复测翻案记录（两轮共 7 条 ❌ → 6 条是误判）
 
 | 原判定 | 复测结论 | 原来的错在哪 |
 |---|---|---|
 | 渐变映射 ❌ | **✅ 可用** | 用了事件 ID `gradientMap`(4302)，应使用类 ID `gradientMapClass`(GdMp) |
 | 马赛克 ❌ | **✅ 可用** | 只试了 DOM 的 `applyMosaic`，没试 AM 事件 `Msc ` + `ClSz` |
 | 组套组 ❌ | **✅ 可用** | 只试了 `move`/`duplicate`，没试"父组内锚点上 `make layerSection`" |
-| 图层蒙版 ❌ | ❌ 仍不可用 | 7 种配方全部「程序错误」，DOM 无 add-mask 方法 |
-| 阈值调整层 ❌ | ❌ 仍不可用 | `thresholdClass`/`Thsh`/`thresholdLayer`/curves 改 type 四条路全堵；但**像素层** `layer.threshold()` 可用（MAD 93.88） |
-| WebP ❌ | ❌ 仍不可用 | 枚举/构造器/AM save 三条路全堵 |
-| 矢量形状层 ❌ | ❌ 仍不可用 | `contentLayer` 报「命令<未知的>当前不可用」，带 shape 描述符亦同 |
+| 图层蒙版 ❌ | **✅ 可用** | 第三个枚举值要写 `Msk `（=stringID "mask"），不是 `maskChannel`；再叠加 3 字符 charID 的坑，就成了「程序错误」 |
+| 阈值调整层 ❌ | ❌ **仍不可用（已用对照组确证）** | 10 种组合全堵；同一段骨架换 curves/posterize/invert 全过 → 排除写法问题。替代：**像素层** `layer.threshold()`（MAD 93.88） |
+| WebP ❌ | **✅ 可用** | 只试过 `As=WebP`（charID）；正解是 `as=WebPFormat` 对象 + `compression/quality` |
+| 矢量形状层 ❌ | **✅ 可用** | 之前只给了 `null` 引用 + 极简 `type`，缺 `shape`/`strokeStyle` 两层；补齐即成功 |
 
 **可复用的判断纪律**：报"不支持"之前，至少试到这几类表达——① DOM 方法 ② `make` + 类 ID ③ `make` + 事件 ID ④ AM 事件 + charID ⑤ 换父容器/锚点引用。三条误判都是死在"只试了①"。
+
+## 9. 第二轮复测：蒙版 / 矢量形状层 / WebP 三项翻案（2026-11-15 下午）
+
+按网上公开配方（Adobe 社区 Paul Riggott、r-bin，Stephen Marsh，Bioticronic gist）重测，三网三中、一网仍空。
+
+### 9.1 定位到的真凶：`charIDToTypeID` 只吃 4 个字符
+
+抄来的代码里 `"Nw "`、`"At "`、`"Mk "` 都是 **3 字符**，函数**在构造 ActionDescriptor 阶段就抛「非法参数」**，
+根本走不到 `executeAction`——所以看到的是"参数不合法"，而不是"命令不可用"，极易误判成"本机不支持"。
+
+```
+charID [Nw ] len=3  => 抛「非法参数」
+charID [Nw  ] len=4 => 1316429856
+charID [At ] len=3  => 抛「非法参数」
+charID [At  ] len=4 => 1098129440
+charID [Mk ] len=3  => 抛「非法参数」
+charID [Mk  ] len=4 => 1298866208
+```
+
+### 9.2 图层蒙版：三种模式全通
+
+```
+PASS A1 revealAll(RvlA)
+PASS A2 revealSelection(RvlS)
+PASS A3 hideAll(HdAl) + 在蒙版上涂白
+```
+
+像素证据（导出 PNG 读 alpha 通道）：
+
+| 用例 | 选区外 (50,50) | 选区内 (150,150) | 说明 |
+|---|---|---|---|
+| A2 `RvlS` | alpha **0** | alpha **255** | 选区外真透明 |
+| A3 `HdAl` + 蒙版涂白 | alpha **0** | alpha **255** | 蒙版可继续编辑（`slct` 到 `Chnl/Msk ` 后 fill） |
+
+### 9.3 矢量形状层：矩形填充 + 椭圆描边
+
+```
+PASS D1 形状层 矩形+纯色填充  => kind=LayerKind.SOLIDFILL
+PASS D2 形状层 椭圆+描边      => kind=LayerKind.SOLIDFILL
+```
+
+像素证据：
+
+| 检查点 | 实测 | 期望 |
+|---|---|---|
+| 矩形内 (150,125) | (200,130,47) | 探针里直接写 `Rd=200/Grn=130/Bl=47`，**完全一致**。（清单版 `C8892F` 另测：WebP 中心像素 (200,137,47)，精确） |
+| 矩形边界 x=49 / 50 / 249 / 250 | 白 / 橙 / 橙 / 白 | 形状严格占 x∈[50,250) |
+| 椭圆描边环 (60,150) | (0,0,0) | 6px 黑描边 |
+| 椭圆内部 (150,150) | (255,255,255) | `fillEnabled=false`，内部不填 |
+| 近黑像素占比 | 3.39% | 描边存在 |
+| 回读 PSD 的 `pathItems.length` | 1 | 仍是矢量，未栅格化 |
+
+### 9.4 WebP
+
+```
+PASS C1 WebP 有损 q80    => 3,366 B
+PASS C2 WebP 无损        => 3,300 B
+c1/c2: RIFF/WEBP 头=True  PIL 解码=WEBP size=(200,120)
+```
+
+清单驱动下（900×600 整图）：
+
+```
+PASS 9 export webp => ...
+ecovered2.webp
+recovered2.webp  14,406 B  header=b'RIFF'/b'WEBP'  size=(900,600)  中心像素 (200,137,47)
+```
+
+### 9.5 阈值调整层：对照组确证不可用
+
+同一段建层骨架，只换 class：
+
+```
+PASS CTRL_curves     => kind=LayerKind.CURVES
+PASS CTRL_posterize  => kind=LayerKind.POSTERIZE
+PASS CTRL_invert     => kind=LayerKind.INVERSION
+FAIL V1_thresholdClass_empty      !! 命令"建立:"当前不可用
+FAIL V2_ThshCharID_empty          !! 命令"建立:"当前不可用
+FAIL V3_Thsh_Lvl                  !! 命令"建立:"当前不可用
+FAIL V4_thClass_preset_Lvl        !! 命令"建立:"当前不可用
+FAIL V5_thClass_Adjs              !! 命令"建立:"当前不可用
+FAIL V6_putClass_thClass          !! 命令"建立:"当前不可用
+FAIL V7_curves_then_setd          !! 命令"设置"当前不可用
+FAIL V8_thresholdAdjustment       !! 命令"建立:"当前不可用
+FAIL V9_thresholdLayer            !! 命令"建立:"当前不可用
+FAIL V10_putClass_thresholdAdjustment !! 命令"建立:"当前不可用
+```
+
+**对照组能过、阈值 10 种全堵** → 这是该类调整层在本版本确实建不出来，不是写法问题。
+实用替代：像素层 `layer.threshold(level)`，MAD 93.88。
+
+### 9.6 清单式总验收（新增 `manifest_recovered2.json`）
+
+```
+PASS 1 bg  => bg
+PASS 2 shape rectangle ShapeRect  => kind=LayerKind.SOLIDFILL
+PASS 3 shape ellipse ShapeRing    => kind=LayerKind.SOLIDFILL
+PASS 4 rect Fade                  => Fade op=100
+PASS 5 mask revealSelection FadeMask => mask=revealSelection on Fade
+PASS 6 text Note
+PASS 7~9 export psd / png / webp
+SUMMARY pass=9 fail=0 layers=5 size=900x600
+docs left open=0 (应=0)
+```
+
+**PSD 往返像素级证明**：重开 `recovered2.psd` → 再导一张 PNG → 与原 PNG 比对，
+
+```
+MAD(原PNG vs PSD回读PNG) = 0.0000
+选区内(200,380)=(59,130,246) 蓝   选区外(60,380)=(16,16,20) 底色
+```
+
+如果蒙版丢了，Fade 会变回整块矩形、MAD 会大幅偏离 0；**0.0000 说明蒙版与形状层在 PSD 里完整保存**。
