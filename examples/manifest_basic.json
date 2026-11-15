@@ -1,0 +1,78 @@
+{
+  "out": {
+    "dir": "./_out",
+    "stem": "basic",
+    "formats": [
+      "png",
+      "psd"
+    ]
+  },
+  "doc": {
+    "w": 1080,
+    "h": 1350,
+    "dpi": 72,
+    "bg": "14161A",
+    "name": "PS-Basic"
+  },
+  "layers": [
+    {
+      "type": "rect",
+      "name": "Rule",
+      "x1": 84,
+      "y1": 96,
+      "x2": 180,
+      "y2": 101,
+      "color": "C8892F"
+    },
+    {
+      "type": "text",
+      "name": "Title",
+      "text": "最小清单",
+      "font": "NotoSansSC-Black",
+      "size": 96,
+      "color": "F2EEE7",
+      "x": 84,
+      "y": 300,
+      "tracking": 20
+    },
+    {
+      "type": "text",
+      "name": "Sub",
+      "text": "改 JSON 即可，不用碰脚本",
+      "font": "NotoSansSC-Light",
+      "size": 30,
+      "color": "B9B2A2",
+      "x": 84,
+      "y": 370,
+      "tracking": 40
+    },
+    {
+      "type": "rect",
+      "name": "Bar",
+      "x1": 84,
+      "y1": 460,
+      "x2": 996,
+      "y2": 466,
+      "color": "3A3D42"
+    },
+    {
+      "type": "adjust",
+      "name": "Lift",
+      "adj": "curves",
+      "points": [
+        [
+          0,
+          10
+        ],
+        [
+          128,
+          138
+        ],
+        [
+          255,
+          246
+        ]
+      ]
+    }
+  ]
+}
