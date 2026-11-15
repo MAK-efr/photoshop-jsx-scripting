@@ -78,12 +78,15 @@ FILTERS = {
 }
 ADJUSTS = {"curves", "levels", "huesat", "bw", "photoFilter", "vibrance",
            "exposure", "colorBalance", "invert", "posterize", "selectiveColor",
-           "channelMixer", "colorLookup", "gradientMap"}
+           "channelMixer", "colorLookup", "gradientMap", "threshold"}
 # 注意：这里必须是 **class ID**，不是事件 ID。
 # 反例：写 "gradientMap"（事件ID 4302）会报「命令"建立:"当前不可用」；
 #       写 "gradientMapClass"（class ID）才建得出来。阈值同理，只是它的 class 也不可用。
 ADJ_KIND_STR = {
     "gradientMap": "gradientMapClass",
+    # 阈值：类 ID 是 "thresholdClassEvent"，而事件 ID 是 charID "Thsh"。
+    # 用 Thsh 建层报「命令"建立:"当前不可用」——曾被误判成"本机不支持"，见坑位 18。
+    "threshold": "thresholdClassEvent",
     "curves": "curves", "levels": "levels", "huesat": "hueSaturation",
     "bw": "blackAndWhite", "photoFilter": "photoFilter", "vibrance": "vibrance",
     "exposure": "exposure", "colorBalance": "colorBalance", "invert": "invert",
@@ -221,6 +224,10 @@ def validate(m):
             elif t == "adjust":
                 if L.get("adj") not in ADJUSTS:
                     errs.append("%s 未知调整类型 %s" % (p, L.get("adj")))
+                elif L.get("adj") == "threshold":
+                    lv = L.get("level", 128)
+                    if isinstance(lv, bool) or not isinstance(lv, int) or not (0 <= lv <= 255):
+                        errs.append("%s threshold.level 必须是 0-255 的整数（现为 %r）" % (p, lv))
             elif t == "filter":
                 if L.get("filter") not in FILTERS:
                     errs.append("%s 未知滤镜 %s" % (p, L.get("filter")))
@@ -504,6 +511,19 @@ PRELUDE = r'''#target photoshop
             if (on) c++;
         }
         return c;
+    }
+    // 阈值调整层：类 ID 是 stringID "thresholdClassEvent"（不是 thresholdClass / Thsh）。
+    // 建层与 setd 的类型键**都必须用这个 stringID**；用 charID "Thsh" 建层报「建立不可用」、
+    // setd 报「设置不可用」——两条都会让人误判成"本版本不支持"。
+    function setThreshold(lvl) {
+        var d = new ActionDescriptor();
+        var r = new ActionReference();
+        r.putEnumerated(charIDToTypeID("AdjL"), charIDToTypeID("Ordn"), charIDToTypeID("Trgt"));
+        d.putReference(charIDToTypeID("null"), r);
+        var d2 = new ActionDescriptor();
+        d2.putInteger(charIDToTypeID("Lvl "), lvl);
+        d.putObject(charIDToTypeID("T   "), stringIDToTypeID("thresholdClassEvent"), d2);
+        executeAction(charIDToTypeID("setd"), d, DialogModes.NO);
     }
     function setCurves(pts) {
         var d = new ActionDescriptor();
@@ -828,6 +848,11 @@ def emit_layer(L, depth=0, stack=None):
             out.append('  setLevels(%s, %s, %s, %s, %s);' % (_num(i0), _num(i1), _num(L.get("gamma", 1.0)), _num(o0), _num(o1)))
         elif adj == "huesat":
             out.append('  setHueSat(%s, %s, %s);' % (_num(L.get("hue", 0)), _num(L.get("sat", 0)), _num(L.get("light", 0))))
+        elif adj == "threshold":
+            lv = L.get("level", 128)
+            if isinstance(lv, bool) or not isinstance(lv, int) or not (0 <= lv <= 255):
+                raise ValueError("threshold.level 必须是 0-255 的整数")
+            out.append('  setThreshold(%s);' % _num(lv))
         out += ["  " + x for x in _common(L)]
         out.append('  return "kind=" + l.kind;')
         out.append('});')

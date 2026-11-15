@@ -190,7 +190,7 @@ closed
 
 嵌套结构、调整层类型、可见性、不透明度全部原样保留。
 
-## 8. 复测翻案记录（两轮共 7 条 ❌ → 6 条是误判）
+## 8. 复测翻案记录（三轮共 7 条 ❌ → **7 条全是误判**）
 
 | 原判定 | 复测结论 | 原来的错在哪 |
 |---|---|---|
@@ -198,11 +198,12 @@ closed
 | 马赛克 ❌ | **✅ 可用** | 只试了 DOM 的 `applyMosaic`，没试 AM 事件 `Msc ` + `ClSz` |
 | 组套组 ❌ | **✅ 可用** | 只试了 `move`/`duplicate`，没试"父组内锚点上 `make layerSection`" |
 | 图层蒙版 ❌ | **✅ 可用** | 第三个枚举值要写 `Msk `（=stringID "mask"），不是 `maskChannel`；再叠加 3 字符 charID 的坑，就成了「程序错误」 |
-| 阈值调整层 ❌ | ❌ **仍不可用（已用对照组确证）** | 10 种组合全堵；同一段骨架换 curves/posterize/invert 全过 → 排除写法问题。替代：**像素层** `layer.threshold()`（MAD 93.88） |
+| 阈值调整层 ❌ | **✅ 可用（§11 翻案）** | 类 ID 是 `thresholdClassEvent`；我试的 `thresholdClass`/`thresholdAdjustment`/`thresholdLayer`/`Thsh` 全不在名单里，10 种组合自然全灭 |
 | WebP ❌ | **✅ 可用** | 只试过 `As=WebP`（charID）；正解是 `as=WebPFormat` 对象 + `compression/quality` |
 | 矢量形状层 ❌ | **✅ 可用** | 之前只给了 `null` 引用 + 极简 `type`，缺 `shape`/`strokeStyle` 两层；补齐即成功 |
 
-**可复用的判断纪律**：报"不支持"之前，至少试到这几类表达——① DOM 方法 ② `make` + 类 ID ③ `make` + 事件 ID ④ AM 事件 + charID ⑤ 换父容器/锚点引用。三条误判都是死在"只试了①"。
+**可复用的判断纪律**：报"不支持"之前，至少试到这几类表达——① DOM 方法 ② `make` + 类 ID ③ `make` + 事件 ID ④ AM 事件 + charID ⑤ 换父容器/锚点引用 ⑥ **从已存在的同类对象反查 ID**（§11 就是靠 ⑥ 破的）。
+三条误判都是死在"只试了①"，第四条死在"名字靠猜"——**先反查，再试**。
 
 ## 9. 第二轮复测：蒙版 / 矢量形状层 / WebP 三项翻案（2026-11-15 下午）
 
@@ -271,7 +272,10 @@ ecovered2.webp
 recovered2.webp  14,406 B  header=b'RIFF'/b'WEBP'  size=(900,600)  中心像素 (200,137,47)
 ```
 
-### 9.5 阈值调整层：对照组确证不可用
+### 9.5 阈值调整层：当时判定"不可用"（**已于 §11 推翻，保留原文**）
+
+> ⚠️ 本节结论是**错的**，保留是为了记录错误的推理过程。真正的解法见 §11：
+> 类 ID 是 `thresholdClassEvent`，我试过的 4 个名字都不在其中。
 
 同一段建层骨架，只换 class：
 
@@ -455,3 +459,79 @@ manifest_variants      SUMMARY pass=10 fail=0 layers=6 variants=3
 ```
 
 合计 **79 步，fail=0**。另有批量 3 行 ×9 步、回填 7 步 / 5 步 / 负向 1 失败。
+
+## 11. 第四轮：阈值调整层翻案（2026-11-15 晚，结论：**之前判错**）
+
+§9.5 里我写的是"对照组确证不可用"。这次重新搜公开资料，在 ps-scripts 一个讲
+「按图层反查 LayerKind」的帖子里看到这段 switch：
+
+```javascript
+case 'posterization'      : return LayerKind.POSTERIZE;
+case 'thresholdClassEvent': return LayerKind.THRESHOLD;    // ← 就是它
+```
+
+也就是说阈值层的**类 ID 叫 `thresholdClassEvent`**，我此前试过的
+`thresholdClass` / `thresholdAdjustment` / `thresholdLayer` / `Thsh`(charID) 一个都不对。
+10 种组合全灭不是"功能不存在"，是**名字全部猜错**。
+
+### 11.1 建层：5 个变体，4 个通过
+
+```
+OK   A_empty    cls=thresholdClassEvent  kind=LayerKind.THRESHOLD  name=阈值 1  layers=2
+OK   B_preset   cls=thresholdClassEvent  kind=LayerKind.THRESHOLD  name=阈值 1  layers=2
+OK   C_lvl      cls=thresholdClassEvent  kind=LayerKind.THRESHOLD  name=阈值 1  layers=2
+OK   D_lvlPre   cls=thresholdClassEvent  kind=LayerKind.THRESHOLD  name=阈值 1  layers=2
+ERR  E_thsh     cls=Thsh  !! 发生了常规 Photoshop 错误。该功能可能无法在这个版本的 Photoshop 中使用。
+- 命令"建立:"当前不可用。
+```
+
+E 就是原来那 10 种组合里的写法，同一个文档、同一段骨架，只换类 ID 就从 FAIL 变 PASS。
+
+### 11.2 参数：`Lvl` 写在 make 里会被静默丢弃
+
+第一次测 C（`Lvl=128`）与 F（`Lvl=64`）时，两张图**逐个像素完全相同**（MAD 0.000）——
+说明 `make` 阶段塞进 type 描述符的 `Lvl` 根本没被采纳，层还是默认值。
+这类"层建成了但参数没进去"的坑比报错更危险，所以参数一律走 `setd`：
+
+```
+ERR  G setd T=charID("Thsh")                 !! 命令"设置:当前不可用。
+OK   H setd T=stringID("thresholdClassEvent")  kind=LayerKind.THRESHOLD
+```
+
+**建层和 `setd` 的 `T` 键都必须用 stringID 形式**；任何一处换成 charID `Thsh` 就报"不可用"。
+
+### 11.3 像素证据：四条灰带证明阈值真的变了
+
+素材：`60 / 100 / 140 / 200` 四条灰带，读同一列（x=150）四个高度。
+
+```
+base   60->60   100->100  140->140  200->200     ← 不建层
+I      60->0    100->0    140->255  200->255     ← 默认阈值 128
+H      60->0    100->255  140->255  200->255     ← Lvl=64
+```
+
+`100` 这条带在阈值 128 时转黑、阈值 64 时转白——**只改一个整数就让整条灰带翻面**，
+这是参数生效最硬的判据。整图 `MAD(base vs Lvl=64) = 96.25`。
+
+### 11.4 PSD 往返 + 类 ID 反查
+
+重开 `threshold.psd`：
+
+```
+layer[0] Thresh64 kind=LayerKind.THRESHOLD
+adjustment class = thresholdClassEvent
+```
+
+回读出的类 ID 正是 `thresholdClassEvent`，与建层时用的完全一致。
+这个方法（`executeActionGet` → `getList("adjustment").getClass(0)` → `typeIDToStringID`）
+应该作为**所有调整层的标准反查手段**：不要猜名字，先看 Photoshop 自己怎么叫。
+
+### 11.5 收口
+
+- `ps_build.py`：`ADJUSTS` 增加 `threshold`，`ADJ_KIND_STR["threshold"] = "thresholdClassEvent"`，新增 `setThreshold(lvl)`；`level` 校验 0–255 整数。
+- 新增 `examples/manifest_threshold.json`（+ `manifest_threshold_base.json` 基准），`pass=7 fail=0`。
+- 调整层能力从 **14 ✅ / 1 ❌** 变成 **15 ✅ / 0 ❌**；§8 的"7 条 ❌"现在**全部**是误判。
+- 全量回归：7 份清单 **86 步 fail=0**。
+
+**这一轮的教训比结论更值钱**：连续四次误判里有三次是同一类——**ID 名字靠记忆猜**。
+以后判定"不支持"必须有一步是"从已存在的对象反查真实 ID"，没有这一步就不许下结论。

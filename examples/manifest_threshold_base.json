@@ -1,0 +1,11 @@
+{
+  "_note": "threshold 的对照基准：同样四条灰带，不加阈值层",
+  "out": {"dir": "_out", "stem": "threshold_base", "formats": ["png"]},
+  "doc": {"w": 300, "h": 200, "dpi": 72, "name": "TH-BASE"},
+  "layers": [
+    {"type": "rect", "x1": 0, "y1": 0, "x2": 300, "y2": 50, "color": "3C3C3C", "name": "B60"},
+    {"type": "rect", "x1": 0, "y1": 50, "x2": 300, "y2": 100, "color": "646464", "name": "B100"},
+    {"type": "rect", "x1": 0, "y1": 100, "x2": 300, "y2": 150, "color": "8C8C8C", "name": "B140"},
+    {"type": "rect", "x1": 0, "y1": 150, "x2": 300, "y2": 200, "color": "C8C8C8", "name": "B200"}
+  ]
+}

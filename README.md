@@ -10,6 +10,7 @@ python scripts/ps_build.py examples/manifest_basic.json       # 最小例子
 python scripts/ps_build.py examples/manifest_full.json        # 全特性：15 条指令 → 13 层
 python scripts/ps_build.py examples/manifest_effects.json     # 图层样式：描边/投影/发光/叠加/浮雕
 python scripts/ps_build.py examples/manifest_variants.json    # 一次出 @1.5x / 1:1 / 9:16
+python scripts/ps_build.py examples/manifest_threshold.json    # 阈值调整层（真图层，不是像素滤镜）
 python scripts/ps_batch.py examples/batch_template.json --rows examples/batch_rows.csv
 python scripts/ps_fill.py  examples/fill_cert.json            # 打开 PSD 模板换文案换图
 ```
@@ -29,12 +30,12 @@ python scripts/ps_fill.py  examples/fill_cert.json            # 打开 PSD 模�
 | **图层蒙版** | ✅ | `Mk` + `Nw=Chnl` + `At=Chnl/Chnl/**Msk**` + `Usng=UsrM/RvlA、HdAl、RvlS、HdSl`；`RvlS` 后选区外 alpha=0、选区内 255；蒙版可继续涂黑白 |
 | **矢量形状层** | ✅ | `contentLayer` + `type=solidColorLayer` + `shape=rectangle/ellipse` + `strokeStyle`；回读 `SOLIDFILL` 且仍有 1 条矢量路径 |
 | **图层样式** | ✅ 5 种 | 描边 / 投影 / 外发光 / 颜色叠加 / 斜面和浮雕，走 AM `Lefx`。逐区域像素证据：描边+投影 **MAD 10.85**、浮雕 **6.72**、发光 **6.85**、颜色叠加 **51.66**（预测色 `(70,127,101)` 与实测误差 ≤0.5） |
-| 调整层 | ✅ 14 种 | 曲线 / 色阶 / 色相饱和度 / 黑白 / 照片滤镜 / 自然饱和度 / 曝光度 / 色彩平衡 / 反相 / 色调分离 / 选取颜色 / 通道混合器 / 颜色查找 / **渐变映射** |
+| 调整层 | ✅ 15 种 | 曲线 / 色阶 / 色相饱和度 / 黑白 / 照片滤镜 / 自然饱和度 / 曝光度 / 色彩平衡 / 反相 / 色调分离 / 选取颜色 / 通道混合器 / 颜色查找 / **渐变映射** / **阈值** |
 | 调整参数真的生效 | ✅ | 曲线 MAD **29.51**、色阶 **18.32**、渐变映射 **45.84**（vs 基准图逐像素） |
 | 滤镜 | ✅ 11 种 | 高斯 12.25 / USM 7.87 / 加噪 68.72 / 反相 53.81 / 色调分离 39.86 / 高反差 26.41 / **马赛克 8.92** |
 | **多尺寸变体导出** | ✅ | 源 1080×1350 → `@1.5x` **1620×2025**、`1:1` **1080×1080**、`9:16` **1080×1920**；副本改、主文档不动，`contain` 自动补底色 |
 | **批量出图** | ✅ | 模板 × CSV/JSON，`{{字段}}` 替换，`out.stem` 也能用变量；3 行实测各 9 步 PASS，三张成品互比 MAD **4.10 / 4.47 / 4.47** |
-| **PSD 模板回填** | ✅ | 按图层名改文字、按图层名换智能对象内容、切可见性；**模板 MD5 跑前跑后不变**；图区 MAD **19.70** |
+| **PSD 模板回填** | ✅ | 按图层名改文字、按图层名换智能对象内容、切可见性；**模板 MD5 跑前跑后不变**（`8d0c894b…`）；图区 MAD **92.99** |
 | 文字：点 / 段落 / 竖排 / 变形 | ✅ | 字体回读 `NotoSansSC-Black` 完全一致；`\r` 换行；行距需先 `useAutoLeading=false` |
 | 图片置入（cover/contain） | ✅ | `app.open` → `duplicate` → 按 bounds 缩放定位 |
 | 选区：羽化 / 收缩 / 反选 | ✅ | 100 px 选区 −10 → 80 px |
@@ -70,9 +71,9 @@ python scripts/ps_fill.py  examples/fill_cert.json            # 打开 PSD 模�
 
 图层类型：`rect` `text` `image` `group` `adjust` `filter` `clip` `erase` `mask` `shape` `effect`。字段速查见 [SKILL.md](SKILL.md#4-清单字段速查)。
 
-## 两轮复测，翻了六案
+## 四轮复测，翻了七案
 
-先后有 7 项被标成 ❌。按「把同一能力的全部表达方式列完 + 留一个能过的对照组」重测，**6 项都是我的用法错**，不是 Photoshop 不支持：
+先后有 7 项被标成 ❌。按「把同一能力的全部表达方式列完 + 留一个能过的对照组」重测，**7 项全是我的用法错**，不是 Photoshop 不支持：
 
 | 原判 | 真相 |
 |---|---|
@@ -82,8 +83,9 @@ python scripts/ps_fill.py  examples/fill_cert.json            # 打开 PSD 模�
 | 图层蒙版不支持 | `At` 的枚举值要写 `Msk `（= stringID `mask`），不是 `maskChannel`；且 charID 必须满 4 字符 |
 | 矢量形状层不支持 | 只给了 `null` 引用，缺 `shape` / `strokeStyle` 两层描述符 |
 | WebP 不支持 | 只试了 `As=WebP`（charID），正解是 `as=WebPFormat` 对象 |
+| **阈值调整层不支持** | 拿事件 ID `Thsh`/`thresholdClass` 试了 10 种写法全堵；真正要的是 **`thresholdClassEvent`**（stringID 形式，`make` 和 `setd` 的 `T` 键都得用它），`Lvl` 还必须走 `setd` 才不被丢掉 |
 
-只剩**阈值调整层**一项：10 种写法全堵，而同一段骨架换 curves / posterize / invert 全过（对照组），确证本版本建不出来 —— 用像素层 `layer.threshold()` 代替。复测明细见 [docs/VERIFY.md §8、§9](docs/VERIFY.md)。
+阈值的证据不是"图变了"这么粗：四条灰带 `60/100/140/200`，阈值 64 之后逐条读回 `0/255/255/255`（100 灰必须翻白），整图 MAD **96.25**；重开 PSD 反查 `layer.kind` 得到 `LayerKind.THRESHOLD`、`adjustment class = thresholdClassEvent`。复测明细见 [docs/VERIFY.md §8~§11](docs/VERIFY.md)。
 
 ## 安装
 
@@ -95,9 +97,9 @@ Photoshop 需支持 COM 自动化（CS6 以后都支持，本项目在 **25.0.0*
 
 **顺序很重要**：先完全退出所有 Photoshop 进程，然后让 COM 自己拉起；手动启动的实例不一定注册到 ROT，此时 `Dispatch` 会永久阻塞（见坑位 11）。
 
-## 17 个坑（全部用失败换来的）
+## 18 个坑（全部用失败换来的）
 
-摘要，完整版见 [SKILL.md](SKILL.md#3-坑位17-条全部踩过)：
+摘要，完整版见 [SKILL.md](SKILL.md#3-坑位18-条全部踩过)：
 
 1. `Documents.Count` 不可靠 → 只信 JSX 的 `app.documents.length`
 2. **`displayDialogs = ALL` 会挂死整条链路**（模态框无人可点，`DoJavaScriptFile` 永久阻塞）
@@ -116,6 +118,7 @@ Photoshop 需支持 COM 自动化（CS6 以后都支持，本项目在 **25.0.0*
 15. 图层样式一次 `setd` 是**整体替换**：多个效果必须塞进同一个 `Lefx`，分两次调用第二次会冲掉第一次且不报错；`enabled`/`present`/`showInDialog` 缺一个就「建了但看不见」；效果内部的 mode 是 charID `"Md  "`，不是图层的 `BlendMode.NORMAL`
 16. 换智能对象内容：目标层必须**唯一选中且可见**，隐藏或被图层筛选器挡住都报 `-25920`（文案是「命令当前不可用」）；普通像素层直接替换同样 `-25920`
 17. 批量的变量替换要**跳过 `_` 前缀注释键**，否则 `_note` 里写的 `{{字段}}` 示例会被当成缺字段，整行静默跳过
+18. **同一个调整类型有四个名字**：菜单名（阈值）/ 事件 ID（`Thsh`）/ 类 ID（`thresholdClassEvent`）/ DOM 枚举（`LayerKind.THRESHOLD`）。`make` 和 `setd` 的 `T` 键都要用**类 ID**；而且 `make` 里塞的 `Lvl` 会被**静默丢弃**，必须在 `setd` 里重写一遍
 
 ## 仓库结构
 
@@ -126,7 +129,7 @@ scripts/ps_batch.py   # 模板 × 数据表 批量出图
 scripts/ps_fill.py    # PSD 模板按图层名回填
 scripts/ps.py         # 连接 / 执行 jsx / 图层树 / 卡片模板
 scripts/*.jsx         # 抠图、分通道曲线、海报模板、探针
-examples/             # 六份清单 + 批量模板/数据表 + 回填清单 + 素材（含模板 PSD）
+examples/             # 九份清单（含对照基准）+ 批量模板/数据表 + 回填清单 + 素材（含模板 PSD）
 docs/VERIFY.md        # 每条结论的实测记录与失败原文
 ```
 

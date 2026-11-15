@@ -1,6 +1,6 @@
 ---
 name: ps-jsx-poster-cutout
-description: 用 Photoshop 25.x + ExtendScript(JSX) 做全自动出图：一份 JSON 清单 → 分层 PSD/PNG/JPG/TIFF，支持图层组与组套组（任意层嵌套）、图层蒙版（显示/隐藏全部或选区）、剪贴蒙版、矢量形状层（矩形/椭圆/填充/描边）、图层样式（描边/投影/外发光/颜色叠加/斜面和浮雕）、调整层（曲线/色阶/色相饱和度/渐变映射等 14 种）、滤镜（马赛克/高斯模糊/加噪等 11 种）、文字（点/段落/竖排/变形）、图片置入、选区运算、智能对象、多尺寸变体导出、WebP 导出；另有两个配套入口：数据表批量出图（模板 × CSV/JSON → N 张）与 PSD 模板按图层名回填（换文案/换图，版式不动）；也覆盖本地抠图（选择主体）与人像海报。当用户要求"用 PS 做海报/卡片/证件照"、"把人物抠出来换背景"、"不打开 GUI 批量出图"、"拿设计稿批量换文案"、"PS 能不能脚本化"时使用。已实测六份清单 + 批量 + 回填全部通过（共 79 步 fail=0），图层样式、变体尺寸、批量产物差异、模板哈希不变均有像素级或哈希级证据。
+description: 用 Photoshop 25.x + ExtendScript(JSX) 做全自动出图：一份 JSON 清单 → 分层 PSD/PNG/JPG/TIFF，支持图层组与组套组（任意层嵌套）、图层蒙版（显示/隐藏全部或选区）、剪贴蒙版、矢量形状层（矩形/椭圆/填充/描边）、图层样式（描边/投影/外发光/颜色叠加/斜面和浮雕）、调整层（曲线/色阶/色相饱和度/渐变映射/真·阈值层等 15 种）、滤镜（马赛克/高斯模糊/加噪等 11 种）、文字（点/段落/竖排/变形）、图片置入、选区运算、智能对象、多尺寸变体导出、WebP 导出；另有两个配套入口：数据表批量出图（模板 × CSV/JSON → N 张）与 PSD 模板按图层名回填（换文案/换图，版式不动）；也覆盖本地抠图（选择主体）与人像海报。当用户要求"用 PS 做海报/卡片/证件照"、"把人物抠出来换背景"、"不打开 GUI 批量出图"、"拿设计稿批量换文案"、"PS 能不能脚本化"时使用。已实测七份清单 + 批量 + 回填全部通过（共 86 步 fail=0），图层样式、变体尺寸、批量产物差异、模板哈希不变均有像素级或哈希级证据。
 agent_created: true
 ---
 
@@ -50,18 +50,31 @@ python "$SK/ps_build.py" manifest.json             # 真跑 + 回读日志 + 核
 | **矢量形状层** | ✅ | `make contentLayer` + `using = {type: solidColorLayer{Clr:RGBC}, shape: rectangle/ellipse, strokeStyle}`；矩形/椭圆、纯填充/描边都过，回读 `kind=SOLIDFILL` 且仍有 1 条矢量路径，见坑位 7 |
 | **图层样式** | ✅ | 描边/投影/外发光/颜色叠加/斜面和浮雕 5 种，走 AM `Lefx`；**一次 `setd` 是整体替换**，多效果必须同一次写入，见 1.6 与坑位 15 |
 
-### 1.2 调整层（14 ✅ / 1 ❌）
+### 1.2 调整层（15 ✅ / 0 ❌）
 
 `make AdjL` + `using.adjustmentLayer.type.<ID>`，全部实测建层成功：
 
 ✅ `curves` `levels` `hueSaturation` `blackAndWhite` `photoFilter` `vibrance` `exposure`
-  `colorBalance` `invert` `posterize` `selectiveColor` `channelMixer` `colorLookup` `gradientMap`
+  `colorBalance` `invert` `posterize` `selectiveColor` `channelMixer` `colorLookup` `gradientMap` `threshold`
 
 > **`gradientMap` 必须写 class ID `gradientMapClass`（`GdMp`, 1197755760），不是事件 ID `gradientMap`（4302）。**
 > 写事件 ID 会报「命令"建立:"当前不可用」——这条曾被我误判成"本机不支持"，实际是 ID 用错。
 > 量化证据：Sky 原色 `C8D8FF` 的 B−R=55，套渐变映射后 B−R=**0.00**、均值恰为 `219/219/219`（完全去色 neutralizing），见 `docs/VERIFY.md` §2。
 
-❌ `threshold`（**这是唯一真正建不出来的调整层**：`thresholdClass`/`thresholdAdjustment`/`thresholdLayer`/`Thsh`(charID) 四类 ID × `putObject`/`putClass` × 空参/`Lvl`/`presetKind`/`Adjs` 共 10 种组合，全报「命令"建立:"当前不可用」；**同一段骨架换成 `curves`/`posterize`/`invert` 都成功**，已排除写法问题。替代：**像素层 `layer.threshold()`，MAD 93.88**）
+> **`threshold` 的 class ID 是 `thresholdClassEvent`** —— 既不是 `thresholdClass`，也不是事件 ID `Thsh`。
+> 建层和 `setd` 的 `T` 键**都必须用这个 stringID**；用 `Thsh` 建层报「命令"建立:"当前不可用」、`setd` 报「命令"设置:"当前不可用」，两条都会让人以为功能缺失。
+> **这条我错了三次**（10 种组合全灭后写进文档说"确证不可用"）。破局方法不是继续猜名字，而是**从图层反查类 ID**：
+>
+> ```javascript
+> var ref = new ActionReference();
+> ref.putEnumerated(charIDToTypeID("Lyr "), charIDToTypeID("Ordn"), charIDToTypeID("Trgt"));
+> var desc = executeActionGet(ref);
+> var cls = desc.getList(stringIDToTypeID("adjustment")).getClass(0);
+> typeIDToStringID(cls);      // → "thresholdClassEvent"
+> ```
+>
+> 参数走 `setd`：`T   ` = `stringIDToTypeID("thresholdClassEvent")`，内含整数 `Lvl `（0–255）。
+> 写进 make 的 `Lvl` 会被**忽略**（层照建，仍是默认 128）——这一点差点又骗过我一次。
 
 **参数可写，且真的改像素**（与基准图逐像素平均绝对差）：
 
@@ -70,6 +83,10 @@ python "$SK/ps_build.py" manifest.json             # 真跑 + 回读日志 + 核
 | 曲线 | `setd` → `T=Crvs` / `Adjs[0].Crv` 点列 | **29.51** |
 | 色阶 | `setd` → `T=Lvls` / `Inpt`+`Gmm `+`Outt` | **18.32** |
 | 色相饱和度 | `setd` → `T=HStr` / `H`+`Strt`+`Lght` | **4.69** |
+| 阈值 | `setd` → `T=stringID("thresholdClassEvent")` / 整数 `Lvl ` | **96.25** |
+
+阈值的证据不是只看"变了"：四条灰带 `60/100/140/200`，阈值 64 之后读回 `0/255/255/255`（100 灰必须转白），
+默认 128 时读回 `0/0/255/255`（100 灰必须转黑）。**同一个层只改 `Lvl` 就能让 100 灰翻面**，这才是参数真的生效。
 
 > 只建层不设参 = 默认值 = 无变化。要"看起来调过色"，必须走上面的 `setd` 分支，`ps_build.py` 已封装成 `{"type":"adjust","adj":"curves","points":[[0,12],[128,140],[255,248]]}`。
 
@@ -190,7 +207,7 @@ app.DoJavaScriptFile(r'绝对路径\script.jsx')   # 首选，免疫字符串转
 - `DoJavaScript(code)` 只有单参数签名可用，含引号/换行易报「未终止的字符串常数」→ **一律走 .jsx 文件**。
 - 日志由 JSX 写文件、Python 读回；JSX 返回值不可靠。
 
-## 3. 坑位（17 条，全部踩过）
+## 3. 坑位（18 条，全部踩过）
 
 **1. COM 的 `Documents.Count` 不可靠** → 判断"有没有文档"只信 JSX 的 `app.documents.length`。
 
@@ -332,6 +349,20 @@ catch (e) { L("  [" + s + "] len=" + s.length + " ERR " + e.message); }
 **17. 批量的变量替换要跳过注释键。**
 模板里以 `_` 开头的字段（`_note` / `_comment`）是给人看的说明，里面常写 `{{字段}}` 当示例。如果替换器无差别遍历所有字符串，就会把这些示例当成"数据表缺字段"从而整行跳过——现象是"明明写了数据却一行都没跑"。`ps_batch.py` 已对 `_` 前缀键做豁免。
 
+**18. 调整层的"类 ID"要反查，不能靠猜；而且建层 ID ≠ 设置参数的 ID 写法。**
+同一个调整类型可能有四个不同名字：菜单显示名（阈值）、事件 ID（`Thsh`）、类 ID（`thresholdClassEvent`）、DOM 枚举名（`LayerKind.THRESHOLD`）。`make` 用的是**类 ID**，`setd` 的 `T` 键也要用**同一个类 ID 的 stringID 形式**；写成 charID 会报「设置不可用」。
+可靠做法只有一条——**找一张已经存在的该类型图层，把类 ID 反查出来**：
+
+```javascript
+var ref = new ActionReference();
+ref.putEnumerated(charIDToTypeID("Lyr "), charIDToTypeID("Ordn"), charIDToTypeID("Trgt"));
+var desc = executeActionGet(ref);
+typeIDToStringID(desc.getList(stringIDToTypeID("adjustment")).getClass(0));
+```
+
+同一类坑已经出现三次（`gradientMapClass`、`thresholdClassEvent`、以及字体名静默回落）。判据不是"名字看起来像"，是"反查结果等于什么"。
+另一个更隐蔽的点：`make` 时把参数（如 `Lvl`）一起塞进 type 描述符，**层会建成功但参数被丢弃**——不报错、也不是默认效果。所以调参一律走 `setd`，并用像素量化确认。
+
 ## 4. 清单字段速查
 
 ```jsonc
@@ -353,6 +384,7 @@ catch (e) { L("  [" + s + "] len=" + s.length + " ERR " + e.message); }
     {"type":"adjust","adj":"levels","in":[40,200],"gamma":1.0,"out":[0,255]},
     {"type":"adjust","adj":"huesat","hue":0,"sat":60,"light":0},
     {"type":"adjust","adj":"gradientMap"},
+    {"type":"adjust","adj":"threshold","level":64},          /* 真·阈值调整层，Lvl 0-255 */
     {"type":"filter","filter":"gaussianBlur","radius":24,"target":"PanelAccent"},
     {"type":"filter","filter":"mosaic","cellSize":24,"target":"Tile"},
     {"type":"shape","shape":"rectangle","x1":40,"y1":40,"x2":400,"y2":260,
@@ -439,5 +471,6 @@ python ps_batch.py examples/batch_template.json --rows examples/batch_rows.csv
 - `scripts/*.jsx` — do_cutout（抠图）、curves_tone（分通道曲线）、make_poster（旧模板）、list_layers、probe_*
 - `examples/manifest_basic.json` / `manifest_full.json` / `manifest_recovered.json` / `manifest_recovered2.json`
 - `examples/manifest_effects.json`（+ `manifest_effects_base.json` 无样式基准）、`manifest_variants.json`
+- `examples/manifest_threshold.json`（+ `manifest_threshold_base.json` 四条灰带基准）
 - `examples/batch_template.json` + `batch_rows.csv`、`examples/fill_cert.json`（配套 `assets/tpl_cert.psd`）
 - `docs/VERIFY.md` — 每条结论的实测记录与失败原文

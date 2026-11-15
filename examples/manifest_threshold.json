@@ -1,0 +1,12 @@
+{
+  "_note": "阈值调整层实测样例：四条灰带(60/100/140/200) + 阈值 64。默认层若为 128 则 100 灰应转黑",
+  "out": {"dir": "_out", "stem": "threshold", "formats": ["png", "psd"]},
+  "doc": {"w": 300, "h": 200, "dpi": 72, "name": "TH"},
+  "layers": [
+    {"type": "rect", "x1": 0, "y1": 0, "x2": 300, "y2": 50, "color": "3C3C3C", "name": "B60"},
+    {"type": "rect", "x1": 0, "y1": 50, "x2": 300, "y2": 100, "color": "646464", "name": "B100"},
+    {"type": "rect", "x1": 0, "y1": 100, "x2": 300, "y2": 150, "color": "8C8C8C", "name": "B140"},
+    {"type": "rect", "x1": 0, "y1": 150, "x2": 300, "y2": 200, "color": "C8C8C8", "name": "B200"},
+    {"type": "adjust", "adj": "threshold", "level": 64, "name": "Thresh64"}
+  ]
+}
