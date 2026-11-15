@@ -13,7 +13,12 @@ python scripts/ps_build.py examples/manifest_variants.json    # 一次出 @1.5x 
 python scripts/ps_build.py examples/manifest_threshold.json    # 阈值调整层（真图层，不是像素滤镜）
 python scripts/ps_batch.py examples/batch_template.json --rows examples/batch_rows.csv
 python scripts/ps_fill.py  examples/fill_cert.json            # 打开 PSD 模板换文案换图
+
+python scripts/selftest.py                                    # 一条命令自检全部能力（换机器先跑它）
 ```
+
+**自检结果（本机 25.0.0，清空 `_out` 后从零重建）**：9 份清单 **98 步 fail=0**，批量 3/3，回填 7 步，
+再加 7 项像素判据，共 **20 项检查全过**。
 
 产物（`examples/_out/`）：`caps.psd` 13 层可编辑 · `caps.png` 125 KB · `caps.jpg` 282 KB
 
@@ -35,7 +40,8 @@ python scripts/ps_fill.py  examples/fill_cert.json            # 打开 PSD 模�
 | 滤镜 | ✅ 11 种 | 高斯 12.25 / USM 7.87 / 加噪 68.72 / 反相 53.81 / 色调分离 39.86 / 高反差 26.41 / **马赛克 8.92** |
 | **多尺寸变体导出** | ✅ | 源 1080×1350 → `@1.5x` **1620×2025**、`1:1` **1080×1080**、`9:16` **1080×1920**；副本改、主文档不动，`contain` 自动补底色 |
 | **批量出图** | ✅ | 模板 × CSV/JSON，`{{字段}}` 替换，`out.stem` 也能用变量；3 行实测各 9 步 PASS，三张成品互比 MAD **4.10 / 4.47 / 4.47** |
-| **PSD 模板回填** | ✅ | 按图层名改文字、按图层名换智能对象内容、切可见性；**模板 MD5 跑前跑后不变**（`8d0c894b…`）；图区 MAD **92.99** |
+| **PSD 模板回填** | ✅ | 按图层名改文字、按图层名换智能对象内容、切可见性；**模板 MD5 跑前跑后不变**（`8d0c894b…`）；图区 MAD **94.78** |
+| **一键自检** | ✅ | `python scripts/selftest.py` 真跑 9 清单 + 批量 + 回填，再量 7 项像素；**20 项全过 / 98 步 fail=0** |
 | 文字：点 / 段落 / 竖排 / 变形 | ✅ | 字体回读 `NotoSansSC-Black` 完全一致；`\r` 换行；行距需先 `useAutoLeading=false` |
 | 图片置入（cover/contain） | ✅ | `app.open` → `duplicate` → 按 bounds 缩放定位 |
 | 选区：羽化 / 收缩 / 反选 | ✅ | 100 px 选区 −10 → 80 px |
@@ -90,7 +96,7 @@ python scripts/ps_fill.py  examples/fill_cert.json            # 打开 PSD 模�
 ## 安装
 
 ```bash
-pip install pywin32 pillow        # 只需这两个
+pip install pywin32 pillow numpy    # pywin32+pillow 是出图必需，numpy 只有自检量像素用
 ```
 
 Photoshop 需支持 COM 自动化（CS6 以后都支持，本项目在 **25.0.0** 上验证）。**不需要** SDK、不需要装扩展、不需要开「允许脚本」。
@@ -127,6 +133,7 @@ SKILL.md              # 给 AI 用的技能说明（能力矩阵 + 坑位 + 字�
 scripts/ps_build.py   # 清单驱动器（主力）
 scripts/ps_batch.py   # 模板 × 数据表 批量出图
 scripts/ps_fill.py    # PSD 模板按图层名回填
+scripts/selftest.py   # 一键自检：真跑全部能力 + 量像素
 scripts/ps.py         # 连接 / 执行 jsx / 图层树 / 卡片模板
 scripts/*.jsx         # 抠图、分通道曲线、海报模板、探针
 examples/             # 九份清单（含对照基准）+ 批量模板/数据表 + 回填清单 + 素材（含模板 PSD）

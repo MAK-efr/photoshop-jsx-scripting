@@ -1,6 +1,6 @@
 ---
 name: ps-jsx-poster-cutout
-description: 用 Photoshop 25.x + ExtendScript(JSX) 做全自动出图：一份 JSON 清单 → 分层 PSD/PNG/JPG/TIFF，支持图层组与组套组（任意层嵌套）、图层蒙版（显示/隐藏全部或选区）、剪贴蒙版、矢量形状层（矩形/椭圆/填充/描边）、图层样式（描边/投影/外发光/颜色叠加/斜面和浮雕）、调整层（曲线/色阶/色相饱和度/渐变映射/真·阈值层等 15 种）、滤镜（马赛克/高斯模糊/加噪等 11 种）、文字（点/段落/竖排/变形）、图片置入、选区运算、智能对象、多尺寸变体导出、WebP 导出；另有两个配套入口：数据表批量出图（模板 × CSV/JSON → N 张）与 PSD 模板按图层名回填（换文案/换图，版式不动）；也覆盖本地抠图（选择主体）与人像海报。当用户要求"用 PS 做海报/卡片/证件照"、"把人物抠出来换背景"、"不打开 GUI 批量出图"、"拿设计稿批量换文案"、"PS 能不能脚本化"时使用。已实测七份清单 + 批量 + 回填全部通过（共 86 步 fail=0），图层样式、变体尺寸、批量产物差异、模板哈希不变均有像素级或哈希级证据。
+description: 用 Photoshop 25.x + ExtendScript(JSX) 做全自动出图：一份 JSON 清单 → 分层 PSD/PNG/JPG/TIFF，支持图层组与组套组（任意层嵌套）、图层蒙版（显示/隐藏全部或选区）、剪贴蒙版、矢量形状层（矩形/椭圆/填充/描边）、图层样式（描边/投影/外发光/颜色叠加/斜面和浮雕）、调整层（曲线/色阶/色相饱和度/渐变映射/真·阈值层等 15 种）、滤镜（马赛克/高斯模糊/加噪等 11 种）、文字（点/段落/竖排/变形）、图片置入、选区运算、智能对象、多尺寸变体导出、WebP 导出；另有两个配套入口：数据表批量出图（模板 × CSV/JSON → N 张）与 PSD 模板按图层名回填（换文案/换图，版式不动）；也覆盖本地抠图（选择主体）与人像海报。当用户要求"用 PS 做海报/卡片/证件照"、"把人物抠出来换背景"、"不打开 GUI 批量出图"、"拿设计稿批量换文案"、"PS 能不能脚本化"时使用。已实测九份清单 + 批量 + 回填全部通过（**98 步 fail=0，20 项检查全过**，`python scripts/selftest.py` 一条命令可复现），图层样式、变体尺寸、批量产物差异、模板哈希不变均有像素级或哈希级证据。
 agent_created: true
 ---
 
@@ -9,13 +9,14 @@ agent_created: true
 > 验证环境：Photoshop **25.0.0**（Photoshop 2024）· Win11 26200 · 559 字体 · 2026-11-15
 > 本文每条 ✅/❌ 都有对应的实测记录（`docs/VERIFY.md`），没有"看文档觉得应该行"的条目。
 
-## 0. 四个入口，先选对
+## 0. 五个入口，先选对
 
 | 入口 | 用途 | 命令 |
 |---|---|---|
 | **`scripts/ps_build.py`** | **主力**：JSON 清单 → 分层 PSD/PNG/JPG/TIFF | `python ps_build.py manifest.json` |
 | **`scripts/ps_batch.py`** | 一份模板 × CSV/JSON 数据表 → N 张（`{{字段}}` 替换） | `python ps_batch.py t.json --rows rows.csv` |
 | **`scripts/ps_fill.py`** | 打开现成 .psd，按图层名换文案/换图，版式不动 | `python ps_fill.py fill.json` |
+| **`scripts/selftest.py`** | **自检**：把所有宣称的能力真跑一遍并量像素，换机器先跑它 | `python selftest.py` |
 | `scripts/ps.py` | 底层：连接 / 跑任意 jsx / 导出图层树 / 旧版卡片模板 | `python ps.py info\|exec\|dump\|card` |
 
 清单式不是"把内容写死在 jsx 里"——而是 **Python 决定内容、PS 负责执行**：改文案只改 JSON，不碰脚本。
@@ -467,6 +468,7 @@ python ps_batch.py examples/batch_template.json --rows examples/batch_rows.csv
 - `scripts/ps_build.py` — 清单驱动器（主力）
 - `scripts/ps_batch.py` — 模板 × 数据表 批量出图
 - `scripts/ps_fill.py` — PSD 模板按图层名回填
+- `scripts/selftest.py` — 一条命令自检（9 清单 + 批量 + 回填 + 7 项像素判据）
 - `scripts/ps.py` — 连接/执行/图层树/卡片模板
 - `scripts/*.jsx` — do_cutout（抠图）、curves_tone（分通道曲线）、make_poster（旧模板）、list_layers、probe_*
 - `examples/manifest_basic.json` / `manifest_full.json` / `manifest_recovered.json` / `manifest_recovered2.json`
